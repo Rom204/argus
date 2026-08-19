@@ -30,3 +30,9 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# eBPF compiled objects (built in-place from bpf/*.bpf.c, see ci.yml)
+bpf/*.o
+
+# Compiled Manager binary (go build ./... at repo root)
+/argus

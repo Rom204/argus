@@ -28,7 +28,7 @@ jobs:
           if [ -d "bpf" ]; then
             for f in bpf/*.bpf.c; do
               [ -e "$f" ] || continue
-              clang -O2 -g -target bpf -c "$f" -o "${f%.c}.o"
+              clang -O2 -g -target bpf -I/usr/include/$(uname -m)-linux-gnu -c "$f" -o "${f%.c}.o"
             done
           fi
 
