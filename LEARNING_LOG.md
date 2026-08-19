@@ -29,3 +29,13 @@
   * **Solution:** Realized that secure terminal fields hide typing. Blindly typing `yes` and hitting Enter successfully passed the SSH fingerprint verification and prompted for the password.
 * **Error:** Ran `git init` and suddenly all hidden system files (like `.bashrc`) appeared in the source control tab.
   * **Solution:** Accidentally initialized Git in the root home directory (`/home/rom/`) instead of a dedicated project folder. Fixed by deleting the hidden `.git` folder (`rm -rf .git`) and correctly cloning the repository into the `/argus` directory.
+
+## Milestone 1: eBPF Build Pipeline & CI (August 2026)
+
+### Errors Encountered & Solutions
+* **Error:** The "Install eBPF build dependencies" step in GitHub Actions CI hung for 7+ minutes on `apt-get install ... linux-headers-$(uname -r)`.
+  * **Solution:** Removed `linux-headers-$(uname -r)` from the install line entirely. GitHub-hosted runners run a custom kernel build, so apt has to resolve an exact-version headers package that's often poorly mirrored — a slow, brittle dependency. Confirmed it wasn't actually needed: getting `sensor.bpf.c` to compile only required glibc's multiarch headers (`asm/types.h` via `-I/usr/include/$(uname -m)-linux-gnu`), not kernel headers.
+
+### New Concepts Learned
+* **CO-RE vs. traditional eBPF header dependencies:** Traditional (non-CO-RE) eBPF or kernel module builds often need `linux-headers-$(uname -r)` to compile against real kernel struct definitions. CO-RE eBPF (using BTF + `vmlinux.h`) exists specifically to avoid that dependency — pulling in kernel headers for a CO-RE-only sensor is usually a leftover from copy-pasted tutorials, not an actual requirement.
+* **Hosted CI runners don't run a stock kernel:** GitHub Actions' `ubuntu-24.04` runners run a custom kernel build, not plain stock Ubuntu. Installing a package tied to the exact running kernel version (like `linux-headers-$(uname -r)`) is a common source of slow or failing `apt-get install` steps on hosted CI, since that specific package build may not be cleanly mirrored.

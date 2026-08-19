@@ -37,3 +37,11 @@ This VM has Go 1.26.0 installed; `go.mod` is pinned to `go 1.23` to match `ci.ym
 ## 6. Build artifacts almost got committed once already
 
 `go build ./...` produces a binary literally named `argus` at the repo root (matches the module name) — it was untracked and *not* covered by the original `.gitignore` until this session added `/argus` explicitly. Same story for `bpf/*.o`. Both are gitignored now, but it's a reminder: any new build output location (e.g. a future `Makefile`'s `bin/` or `dist/` dir) needs its own `.gitignore` entry added proactively, not after it shows up in `git status`.
+
+## 7. `linux-headers-$(uname -r)` caused CI to hang ~7 minutes — removed, wasn't needed
+
+The original "Install eBPF build dependencies" CI step installed `linux-headers-$(uname -r)` alongside `clang`/`llvm`/`libbpf-dev`. On the GitHub-hosted `ubuntu-24.04` runner this step stalled for 7+ minutes. Root cause: hosted runners run a custom (non-stock) kernel build, so apt has to resolve a headers package tied to that exact kernel version string — a package that's often poorly mirrored or slow for apt to resolve, unlike the always-available `clang`/`llvm`/`libbpf-dev`.
+
+**Fix applied:** removed `linux-headers-$(uname -r)` from `ci.yml` entirely (also added `--no-install-recommends` and `-y` on `apt-get update` as minor, safe cleanup — neither was the actual fix). This is safe because it was never actually load-bearing: `sensor.bpf.c`'s real missing dependency (item 2 above) was glibc's multiarch `asm/types.h`, not anything from the kernel headers package. Pure CO-RE eBPF (BTF + `vmlinux.h`, tracepoints/`bpf_printk`) doesn't need kernel headers the way traditional kprobe-based eBPF or kernel modules do.
+
+**Watch for:** if a future `.bpf.c` genuinely needs real kernel struct definitions beyond what `vmlinux.h`/BTF provides, re-adding kernel headers should be a deliberate, justified choice — not a default copy-pasted from a non-CO-RE tutorial.
