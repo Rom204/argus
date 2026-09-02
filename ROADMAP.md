@@ -21,9 +21,9 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ## Current status
 
-**Where we are right now:** Milestone 1 partially complete. Build pipeline works end-to-end (BPF compiles, Go builds, CI green), but the sensor itself is still a hello-world with no ring buffer and no loader.
+**Where we are right now:** Milestone 1 partially complete. Toolchain re-verified on the rebuilt Server VM (2026-09-02). Build pipeline works end-to-end (BPF compiles, `go vet`/`build`/`test` clean), and the event contract in `bpf/event.h` is defined and layout-locked. The sensor itself is still a hello-world with no ring buffer and no loader.
 
-**Next actionable sub-task:** M1.5 — define the event struct.
+**Next actionable sub-task:** M1.6 — add a BPF ring buffer map and emit a real execve event through it.
 
 ---
 
@@ -31,14 +31,16 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 **Goal:** a Linux VM running with the eBPF toolchain, editable from the Mac via VS Code Remote-SSH.
 
-- [x] UTM VM created — Ubuntu 24.04.4 LTS Server ARM64, 4 vCPU / 4GB / 25GB
-- [x] `openssh-server` installed and enabled on the VM
+- [x] UTM VM created — Ubuntu 24.04.4 LTS Server ARM64, 4 vCPU / 4GB / 30GB disk (root filesystem extended to 27GB; the installer had left half the volume group unallocated)
+- [x] `openssh-server` installed and enabled on the VM (via `ssh.socket` — `ssh.service` reads "disabled" under socket activation, which is normal on 24.04 and not a fault)
 - [x] System updated, git identity configured
-- [x] SSH keypair generated on the VM, public key added to GitHub
+- [x] SSH keypair generated on the VM, public key added to GitHub — verified live with `ssh -T git@github.com`
 - [x] Repo cloned to `~/projects/argus`, VS Code Remote-SSH connected
-- [x] Toolchain verified: `clang`, `llvm`, `libbpf-dev`, Go, BTF support (`/sys/kernel/btf/vmlinux` present)
+- [x] Toolchain installed and verified **on this VM** (2026-09-02): `clang 18.1.3`, `LLVM 18.1.3`, `libbpf-dev 1.3.0` (all from apt, identical to CI), Go 1.27.1 in `/usr/local/go`, BTF present (`/sys/kernel/btf/vmlinux`)
 
 **Done when:** `ssh rom@192.168.64.5` works, the repo is cloned in the VM, and `clang --version` + `go version` both succeed. ✅
+
+> **Re-verified 2026-09-02.** These boxes were originally checked against the *Desktop* VM and carried across the rebuild unverified — the toolchain one turned out to be false. Every box above has now been re-run against the live Server VM. See `KNOWLEDGE_BASE.md`, "the build toolchain was never reinstalled after the VM rebuild".
 
 ---
 
@@ -51,10 +53,10 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ### Sub-tasks
 
-- [x] Create `bpf/` directory and Go module skeleton (`github.com/romguyer/argus`)
+- [x] Create `bpf/` directory and Go module skeleton (`github.com/Rom204/argus` — must match the GitHub remote, since it is the import prefix for every package)
 - [x] Write `bpf/sensor.bpf.c` as a hello-world `sys_enter_execve` tracepoint hook using `bpf_printk`
 - [x] Set up GitHub Actions CI (compile BPF, `go vet`/`go build`/`go test`)
-- [ ] **M1.5** — Define the event struct in a shared header (`bpf/event.h`): fixed-width types, version/type field, room for execve/exit/setuid variants (see `CLAUDE.md` §6.2)
+- [x] **M1.5** — Define the event struct in a shared header (`bpf/event.h`): fixed-width types, version/type field, room for execve/exit/setuid variants (see `CLAUDE.md` §6.2) — 48 bytes, zero padding, layout locked by `_Static_assert`; verified by compiling for the BPF target and by printing real `offsetof` values
 - [ ] **M1.6** — Add a BPF ring buffer map to `sensor.bpf.c`, emit an execve event through it (replace `bpf_printk`)
 - [ ] **M1.7** — Add `sched_process_exit` tracepoint hook, emit exit events
 - [ ] **M1.8** — Add setuid/setgid/capabilities hooks, emit identity-change events

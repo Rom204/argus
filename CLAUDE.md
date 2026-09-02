@@ -87,16 +87,19 @@ v1 is reached at the end of Milestone 3 in `ROADMAP.md`. M4 and M5 are optional.
 - **Hypervisor:** UTM
 - **Guest OS:** Ubuntu 24.04.4 LTS Server ARM64, kernel 6.8.0-138-generic
 - **VM identity:** hostname `romubuntuvm`, host-only IP `192.168.64.5`, user `rom` (sudo-enabled)
-- **VM resources:** 4 vCPU, 4GB RAM, 25GB disk
+- **VM resources:** 4 vCPU, 4GB RAM, 30GB virtual disk; root filesystem 27GB (the Ubuntu Server installer originally left half the volume group unallocated — extended with `lvextend -l +100%FREE` + `resize2fs` on 2026-09-02)
+- **Toolchain** (verified on this VM 2026-09-02): `clang 18.1.3`, `LLVM 18.1.3`, `libbpf-dev 1.3.0` — all installed **from apt**, which is exactly what `ci.yml` does, so dev and CI stay on identical versions. Go 1.27.1 from the official tarball in `/usr/local/go`, on PATH via `/etc/profile.d/go.sh` (apt's Go is 1.22, too old for this module).
 - **Connection:** VS Code Remote-SSH → code lives on the VM, edited from the Mac. All git/build/test commands run **in the VM shell**, never on the Mac.
+- **Root access:** `sudo` requires a password and caches per-TTY, so an assistant's non-interactive shell cannot run it. Privileged steps (apt installs, loading BPF programs, Docker at M2) must be pasted into Rom's own terminal.
 
-Verify environment facts with `uname -a` / `hostname -I` when it matters — the written values here are the fastest-rotting part of this doc.
+Verify environment facts with `uname -a` / `hostname -I` when it matters — the written values here are the fastest-rotting part of this doc. **After any VM rebuild or migration, re-run the M0 checks rather than trusting the checkboxes** — installed libraries (`libclang1-18`) do not imply installed tools (`clang`); use `command -v clang` and `go version`.
 
 ### 4.5 Repo conventions
 
 - `bpf/*.o` and the built `argus` binary are gitignored — never commit build output.
 - Any new build-output location (a future `Makefile`'s `bin/`/`dist/`) needs its own `.gitignore` entry added **proactively**.
-- `go.mod`'s `go` directive is deliberately pinned to match `ci.yml`'s `actions/setup-go` version — keep both aligned (see `KNOWLEDGE_BASE.md`).
+- `go.mod`'s `go` directive is deliberately pinned to match `ci.yml`'s `actions/setup-go` version — keep both aligned (see `KNOWLEDGE_BASE.md`). Currently **1.27** in three places: the VM's `/usr/local/go`, `go.mod`, and `ci.yml`.
+- `bpf/event.h` is the kernel/user-space contract (§6.2). Its `_Static_assert`s deliberately break the build when the layout changes — that is a prompt to update the Go decoder and DB schema, never something to silence. **Append fields, never insert**, so existing offsets stay stable.
 
 ---
 

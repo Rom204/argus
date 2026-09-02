@@ -1,3 +1,3 @@
-module github.com/romguyer/argus
+module github.com/Rom204/argus
 
-go 1.23
+go 1.27

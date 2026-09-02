@@ -49,15 +49,17 @@
 - **Root Cause:** the dev VM is arm64 (UTM on Apple Silicon); GitHub Actions' `ubuntu-24.04` runners are x86_64. The `clang -target bpf` compile itself is architecture-agnostic (eBPF bytecode isn't tied to host arch), but anything that shells out to `uname -m`, reads `/usr/include/<arch>-linux-gnu/...`, or generates an arch-specific `vmlinux.h` later will behave differently on the two machines.
 - **Where it already matters:** the `asm/types.h` fix above uses `$(uname -m)` specifically so it resolves correctly on *both* machines. Any new command copied from local testing needs the same care — never a hardcoded path.
 
-### Watch item: toolchain version drift — local clang 21 vs. CI's clang
+### Watch item (RESOLVED 2026-09-02): toolchain version drift — local clang vs. CI's clang
 
-- **Root Cause:** the dev VM has `clang 21.1.8`. The `ubuntu-24.04` GitHub-hosted runner image ships an older clang (historically 14–18, depending on image refresh). A plain `bpf_printk` hello-world is far too simple to expose version-specific behavior, so this is low risk *today*. It stops being low risk once real CO-RE relocations, BTF-typed map definitions, or newer clang-only BPF features appear — code could compile locally and fail in CI (or vice versa) purely due to clang version, not logic.
-- **Watch for:** if a future compile passes locally but fails in CI (or the reverse) with no obvious code cause, check `clang --version` on both sides before assuming it's a logic bug.
+- **Root Cause:** the *original* Desktop VM had `clang 21.1.8` installed from a non-apt source, while the `ubuntu-24.04` GitHub-hosted runner installs whatever `apt` offers. Code could compile locally and fail in CI purely due to clang version once real CO-RE relocations or BTF-typed map definitions appeared.
+- **Resolution:** on the rebuilt Server VM the toolchain was installed with **plain `apt install clang llvm libbpf-dev`** — the exact command `ci.yml` runs. Both sides are now `clang 18.1.3` / `LLVM 18.1.3` / `libbpf 1.3.0`, so the drift is closed by construction rather than by vigilance.
+- **Watch for:** this only holds while the VM installs clang from apt. Installing a newer clang from LLVM's own apt repo or a tarball silently reopens the gap. If a compile ever passes locally but fails in CI with no obvious code cause, check `clang --version` on both sides first.
 
 ### Issue: `go.mod`'s `go` directive must be kept in sync with CI manually
 
-- **Root Cause:** the dev VM has Go 1.26.0 installed, while `go.mod` is pinned to `go 1.23` to match `ci.yml`'s `actions/setup-go` version. The pin was set deliberately (`go mod edit -go=1.23`) — nothing enforces it going forward. Running `go get` or `go mod tidy` on the VM could silently bump the directive back toward 1.26 if a dependency requires a newer version, creating a mismatch that surfaces as a confusing CI failure far from its actual cause.
-- **Resolution / watch for:** after any `go get`/`go mod tidy`, diff `go.mod`'s `go` line against `ci.yml`'s `go-version` before pushing. This becomes live the moment `cilium/ebpf` is added in M1.
+- **Root Cause:** Go is not installed from apt (Ubuntu 24.04 only offers 1.22), so the VM's Go version is chosen independently of `ci.yml`'s `actions/setup-go` version. Nothing enforces the two matching. Running `go get` or `go mod tidy` can also bump the directive on its own if a dependency requires a newer version, creating a mismatch that surfaces as a confusing CI failure far from its actual cause.
+- **Resolution:** as of 2026-09-02 all three are aligned on **1.27**: `/usr/local/go` is go1.27.1, `go.mod` says `go 1.27`, `ci.yml` says `go-version: '1.27'`.
+- **Watch for:** after any `go get`/`go mod tidy`, diff `go.mod`'s `go` line against `ci.yml`'s `go-version` before pushing. This becomes live the moment `cilium/ebpf` is added in M1.9.
 
 ### Issue: build artifacts almost got committed
 
@@ -95,6 +97,18 @@
 
 - **Root Cause:** the repository is cloned onto the VM and every `git` command executes there — not on the Mac. With SSH remotes (rather than HTTPS), GitHub authentication must exist on whichever machine actually runs `git`. The Mac's existing GitHub SSH key never leaves the Mac, so it is useless to the VM.
 - **Resolution:** generated a fresh SSH keypair on the VM itself with `ssh-keygen`, and pasted the resulting **public** key into GitHub's SSH keys settings.
+
+### Issue: half the virtual disk was unallocated after the Ubuntu Server install
+
+- **Root Cause:** the Ubuntu Server installer's guided LVM layout does not give the root logical volume the whole volume group. On a 30GB virtual disk it created a 26.9GB volume group but only a 13.5GB `ubuntu-lv` for `/`, leaving 13.4GB unused but invisible to `df`. This is default installer behaviour, not a misconfiguration — the space is reserved so snapshots or extra volumes remain possible.
+- **Resolution:** `sudo lvextend -l +100%FREE /dev/ubuntu-vg/ubuntu-lv` then `sudo resize2fs /dev/ubuntu-vg/ubuntu-lv`. Root went 13.5GB → 27GB online, with the filesystem mounted and no downtime (ext4 supports online *growth*; shrinking would require unmounting and is a genuinely risky operation).
+- **Watch for:** done pre-emptively at M1.5 rather than reactively at M2, because Docker images plus a growing PostgreSQL/TimescaleDB volume are what would have filled it. A full root filesystem fails in confusing ways — apt, Docker, and systemd all break with errors that don't mention disk space.
+
+### Issue: the build toolchain was never reinstalled after the VM rebuild — and the roadmap claimed it was
+
+- **Root Cause:** `ROADMAP.md` M0 carried a checked box reading "Toolchain verified: `clang`, `llvm`, `libbpf-dev`, Go, BTF support". That was true — of the *Desktop* VM. Rebuilding as Server produced a machine with none of it, and the checkbox was carried across the migration unverified. `dpkg -l` showed only *libraries* (`libbpf1`, `libllvm18`, `libclang1-18`) pulled in as dependencies of unrelated packages, which is easy to misread as "clang is installed" — the compiler driver itself was absent. This surfaced only when a build was actually attempted at M1.5, several doc-rewrites later.
+- **Resolution:** installed `clang llvm libbpf-dev` from apt and Go 1.27.1 from the official tarball into `/usr/local/go`, with PATH set via `/etc/profile.d/go.sh`. Then re-ran every M0/M1 checkbox against the live machine instead of trusting the doc.
+- **Watch for:** a checkbox records that something *was* verified, not that it *is* true. After any VM rebuild, snapshot restore, or host migration, re-run the verification rather than migrating the checkmarks — and prefer `command -v clang` / `go version` over reading `dpkg -l`, since installed libraries do not imply installed tools.
 
 ---
 
