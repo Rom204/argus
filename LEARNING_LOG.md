@@ -39,3 +39,18 @@
 ### New Concepts Learned
 * **CO-RE vs. traditional eBPF header dependencies:** Traditional (non-CO-RE) eBPF or kernel module builds often need `linux-headers-$(uname -r)` to compile against real kernel struct definitions. CO-RE eBPF (using BTF + `vmlinux.h`) exists specifically to avoid that dependency — pulling in kernel headers for a CO-RE-only sensor is usually a leftover from copy-pasted tutorials, not an actual requirement.
 * **Hosted CI runners don't run a stock kernel:** GitHub Actions' `ubuntu-24.04` runners run a custom kernel build, not plain stock Ubuntu. Installing a package tied to the exact running kernel version (like `linux-headers-$(uname -r)`) is a common source of slow or failing `apt-get install` steps on hosted CI, since that specific package build may not be cleanly mirrored.
+
+## Phase 2: Desktop → Server Migration (September 2026)
+
+### What Happened
+* The Claude Code extension stopped working inside VS Code Remote-SSH on the original Ubuntu 24.04 Desktop VM.
+* Rather than debug the extension in place inside a bloated Desktop environment, decided on a clean reinstall onto a leaner Ubuntu 24.04.4 LTS **Server** ARM64 image instead.
+* Rebuilt the VM in UTM (4 vCPU, 4GB RAM, 25GB disk, LVM), hostname `romubuntuvm`, host-only IP `192.168.64.5`; installed and enabled `openssh-server`; ran `apt update && apt upgrade -y`; configured git identity; cloned the Argus repo into `~/projects/argus`; reconnected VS Code Remote-SSH and reinstalled the remote extensions (including Claude Code) on the new host.
+
+### New Concepts Learned
+* **Server vs. Desktop as a deployment choice, not just a resource optimization:** Argus's whole stack (eBPF/C, Go, Postgres + TimescaleDB, Docker Compose) is CLI-only and needs no GUI. Server edition idles at ~500MB RAM vs. ~4GB for Desktop, but just as importantly it matches how real EDR agents actually run in production — headless, on servers. Desktop was arguably the wrong environment from the start.
+* **Remote-SSH extensions install per-host, not per-user:** rebuilding the VM meant every server-side VS Code extension had to be reinstalled from scratch, even though the local (Mac-side) VS Code config was untouched — the extensions live on the remote filesystem, not in anything synced from the client.
+* **SSH keys for git must live where git actually runs:** because the repo is cloned onto the VM and every `git` command executes there (not on the Mac), GitHub authentication has to be set up from the VM's own terminal when using SSH remotes (as opposed to HTTPS). This meant generating a *new* SSH keypair on the VM itself (`ssh-keygen`) and pasting the resulting public key into GitHub's SSH keys settings — the Mac's own existing GitHub SSH key doesn't help here, since it never leaves the Mac and the git process runs on the remote Linux box.
+
+### Trade-off Accepted
+* No GUI safety net going forward — all troubleshooting on this VM is CLI-based from here on.

@@ -59,7 +59,7 @@ Not captured in early milestones:
 | User-space agent | Go + cilium/ebpf library | Best library ecosystem; matches cloud-native security industry; static binary deploy |
 | Storage | PostgreSQL + TimescaleDB | Relational schema for analytics + time-series optimization |
 | Orchestration | Docker Compose | Reproducible local deploy; requires --privileged for eBPF (standard, like Falco) |
-| Base OS | Ubuntu 24.04 LTS | Kernel 6.8, full BTF/CO-RE support, industry-standard |
+| Base OS | Ubuntu 24.04.4 LTS **Server** ARM64 | Kernel 6.8.0-138-generic, full BTF/CO-RE support; headless (no GUI) to match production EDR deployment targets and minimize VM footprint (~500MB idle vs ~4GB for Desktop) |
 | CI/CD | GitHub Actions | Build + vet + test on every push |
 
 ## Architecture (High-Level)
@@ -113,9 +113,16 @@ Deployment: `docker compose up` inside a Linux VM. Bonus later: Vagrantfile for 
 ## Development Environment
 
 - **Editor:** VS Code on Mac
-- **Runtime:** Ubuntu 24.04 VM on Mac (UTM)
-- **Connection:** VS Code Remote-SSH extension → code lives on the VM, edited from Mac
-- **Terminal:** VS Code integrated terminal (VM shell)
+- **Host:** Mac Pro M2 (Apple Silicon, ARM64)
+- **Hypervisor:** UTM (free, open-source, native Apple Silicon support)
+- **Guest OS:** Ubuntu 24.04.4 LTS **Server** ARM64 (`ubuntu-24.04.3-live-server-arm64.iso`) — headless, no GUI
+- **VM identity:** hostname `romubuntuvm`, host-only IP `192.168.64.5`, user `rom` (sudo-enabled)
+- **VM resources:** 4 vCPU, 4GB RAM, 25GB disk, LVM enabled
+- **Kernel:** 6.8.0-138-generic aarch64
+- **Connection:** VS Code Remote-SSH extension → code lives on the VM, edited from Mac; all git/build/test commands run in the VM shell, not on the Mac
+- **Terminal:** VS Code integrated terminal (VM shell), or direct `ssh rom@192.168.64.5` from Mac terminal
+
+**Desktop → Server switch:** originally set up on Ubuntu 24.04 **Desktop**. The Claude Code extension stopped working inside VS Code Remote-SSH at one point; rather than debug the extension in a bloated Desktop environment, did a clean reinstall on a leaner Server base instead. Argus's stack is entirely CLI-based (eBPF/C, Go, Postgres, Docker Compose) with no GUI dependency, Server also better matches how production EDR agents actually get deployed (headless), and it idles at ~500MB RAM vs ~4GB for Desktop — more headroom for the project. Trade-off accepted: no GUI safety net, so all troubleshooting is CLI-based now.
 
 ## Roadmap (Milestones — dates TBD)
 
@@ -154,6 +161,7 @@ Priority order if compressed: sensor working > persistence working > events quer
 - [x] Tech stack locked
 - [x] Performance budget set
 - [x] CI/CD config drafted (`.github/workflows/ci.yml`)
-- [ ] GitHub repo created, VS Code + Claude Code extension being set up
-- [ ] Ubuntu VM setup verified (kernel >= 5.8, eBPF support)
-- [ ] Next: Milestone 1 kickoff — Go module skeleton, first eBPF hello-world
+- [x] GitHub repo created, VS Code + Claude Code extension set up (reinstalled on Ubuntu Server after the Desktop → Server rebuild)
+- [x] Ubuntu VM setup verified (kernel 6.8.0-138-generic, eBPF/BTF support confirmed)
+- [x] Milestone 1 kickoff — Go module skeleton, first eBPF hello-world (`bpf/sensor.bpf.c` hooking `sys_enter_execve`, CI build pipeline green)
+- [ ] Next: Milestone 1 continuation — ring buffer/map in `sensor.bpf.c`, Go-side loader (`cilium/ebpf`) reading events and printing to stdout

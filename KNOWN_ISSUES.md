@@ -28,6 +28,8 @@ This VM has `clang 21.1.8`. The `ubuntu-24.04` GitHub-hosted runner image ships 
 
 **Suggested fix (not done yet):** update the Tech Stack table in `PROJECT_CONTEXT.md` to reflect the real VM version, or explicitly note the VM has since been upgraded past the original scoping assumption.
 
+**Resolved:** the VM was subsequently rebuilt from Ubuntu 24.04 **Desktop** to Ubuntu 24.04.4 LTS **Server** ARM64 (kernel `6.8.0-138-generic aarch64`) after the Claude Code extension stopped working under VS Code Remote-SSH on Desktop — a clean reinstall to a leaner, headless base was preferred over debugging the extension in place. `PROJECT_CONTEXT.md`'s tech-stack table and Development Environment section now reflect the real Server/kernel version. Keeping this entry for history rather than deleting it.
+
 ## 5. Go module `go` directive must be manually kept in sync with CI
 
 This VM has Go 1.26.0 installed; `go.mod` is pinned to `go 1.23` to match `ci.yml`'s `actions/setup-go` version. This pin was set deliberately (`go mod edit -go=1.23`) — nothing enforces it automatically going forward. Running `go get` or `go mod tidy` later on this machine could silently bump the `go` directive back up toward 1.26 if a dependency requires a newer version, creating a mismatch with CI's pinned `1.23` that shows up as a confusing CI failure far from its actual cause.
@@ -45,3 +47,9 @@ The original "Install eBPF build dependencies" CI step installed `linux-headers-
 **Fix applied:** removed `linux-headers-$(uname -r)` from `ci.yml` entirely (also added `--no-install-recommends` and `-y` on `apt-get update` as minor, safe cleanup — neither was the actual fix). This is safe because it was never actually load-bearing: `sensor.bpf.c`'s real missing dependency (item 2 above) was glibc's multiarch `asm/types.h`, not anything from the kernel headers package. Pure CO-RE eBPF (BTF + `vmlinux.h`, tracepoints/`bpf_printk`) doesn't need kernel headers the way traditional kprobe-based eBPF or kernel modules do.
 
 **Watch for:** if a future `.bpf.c` genuinely needs real kernel struct definitions beyond what `vmlinux.h`/BTF provides, re-adding kernel headers should be a deliberate, justified choice — not a default copy-pasted from a non-CO-RE tutorial.
+
+## 8. VS Code Remote-SSH extensions install per-host, not per-user
+
+When the dev VM was rebuilt (Ubuntu Desktop → Server), every server-side VS Code extension — including Claude Code — had to be reinstalled from scratch on the new host, even though the local VS Code config/SSH host entry looked unchanged. Remote-SSH extensions live on the remote filesystem, not in any config synced from the client side.
+
+**Watch for:** after any future VM rebuild, snapshot restore, or disk swap, expect to reinstall remote extensions before assuming a "broken extension" is a code or config bug rather than "it's just not installed on this host yet."
