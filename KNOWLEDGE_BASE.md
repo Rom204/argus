@@ -98,6 +98,13 @@
 - **Root Cause:** the repository is cloned onto the VM and every `git` command executes there — not on the Mac. With SSH remotes (rather than HTTPS), GitHub authentication must exist on whichever machine actually runs `git`. The Mac's existing GitHub SSH key never leaves the Mac, so it is useless to the VM.
 - **Resolution:** generated a fresh SSH keypair on the VM itself with `ssh-keygen`, and pasted the resulting **public** key into GitHub's SSH keys settings.
 
+### Issue: one `sudo` produced 28 SETUID events
+
+- **Root Cause:** not a bug — `sudo` genuinely makes ~28 successful `set*id` syscalls in a single invocation, repeatedly re-asserting credentials it already holds as it validates, drops, and re-acquires privilege. Argus hooks six of those syscalls (`setuid`, `setgid`, `setreuid`, `setregid`, `setresuid`, `setresgid`), so it faithfully reported all of them. Across the 28 events there were only **4 distinct uid/gid states**; the other 24 changed nothing.
+- **Resolution:** deduplicate in the Go reader (`sensor/identity.go`), not in the probes. An `identityTracker` holds each process's last-known uid/gid and drops set\*id events that match it. EXECVE seeds the baseline; EXIT deletes the entry, which both bounds the map to live processes and stops a recycled PID inheriting the previous occupant's credentials. Output for one `sudo` went 28 → 4.
+- **Why in user space:** `CLAUDE.md` §6.2 — producers stay dumb, filtering goes wherever it is cheapest to express correctly. Doing this in BPF would need a per-PID hash map, cleanup logic, and verifier-friendly lookups, to save ring buffer traffic that is not currently a bottleneck.
+- **Watch for:** a process already running when Argus starts has no recorded baseline, so its *first* identity event is always emitted — it cannot be known to be a no-op. That is deliberate, and covered by a test.
+
 ### Issue: half the virtual disk was unallocated after the Ubuntu Server install
 
 - **Root Cause:** the Ubuntu Server installer's guided LVM layout does not give the root logical volume the whole volume group. On a 30GB virtual disk it created a 26.9GB volume group but only a 13.5GB `ubuntu-lv` for `/`, leaving 13.4GB unused but invisible to `df`. This is default installer behaviour, not a misconfiguration — the space is reserved so snapshots or extra volumes remain possible.

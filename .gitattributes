@@ -1,0 +1,5 @@
+# bpf/vmlinux.h is generated wholesale from the kernel's BTF:
+#   bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+# It is committed so builds need no bpftool, but it is not hand-written code —
+# keep it out of GitHub's language stats and collapsed in diffs.
+bpf/vmlinux.h linguist-generated=true

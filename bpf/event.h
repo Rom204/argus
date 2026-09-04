@@ -18,7 +18,11 @@
 #ifndef __ARGUS_EVENT_H
 #define __ARGUS_EVENT_H
 
+/* vmlinux.h defines __u32/__u64 itself; including both is a redefinition
+ * error. Guarding keeps this header self-contained either way. */
+#ifndef __VMLINUX_H__
 #include <linux/types.h>
+#endif
 
 #define ARGUS_EVENT_VERSION 1u
 

@@ -57,10 +57,11 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 - [x] Write `bpf/sensor.bpf.c` as a hello-world `sys_enter_execve` tracepoint hook using `bpf_printk`
 - [x] Set up GitHub Actions CI (compile BPF, `go vet`/`go build`/`go test`)
 - [x] **M1.5** — Define the event struct in a shared header (`bpf/event.h`): fixed-width types, version/type field, room for execve/exit/setuid variants (see `CLAUDE.md` §6.2) — 48 bytes, zero padding, layout locked by `_Static_assert`; verified by compiling for the BPF target and by printing real `offsetof` values
-- [ ] **M1.6** — Add a BPF ring buffer map to `sensor.bpf.c`, emit an execve event through it (replace `bpf_printk`)
-- [ ] **M1.7** — Add `sched_process_exit` tracepoint hook, emit exit events
-- [ ] **M1.8** — Add setuid/setgid/capabilities hooks, emit identity-change events
-- [ ] **M1.9** — Add `cilium/ebpf` to `go.mod`; write the Go loader in a `sensor/` package: load object → attach programs → read ring buffer → decode → print structured events to stdout
+- [x] **M1.6** — Add a BPF ring buffer map to `sensor.bpf.c`, emit an execve event through it (replace `bpf_printk`) — 256KB ringbuf; hook moved from `sys_enter_execve` to `sched/sched_process_exec` so `comm` is the *new* binary and failed execs are not reported. Verified: executing a renamed copy of `/bin/true` produced exactly one EXECVE with `comm=argustest`
+- [x] **M1.7** — Add `sched_process_exit` tracepoint hook, emit exit events — the tracepoint fires per *task*, so the hook emits only when `pid == tgid` (the thread group leader), which is what "a process exited" means. Verified with an 8-thread fixture: 9 tasks terminated, exactly 1 EXIT event, on the leader's pid
+- [x] **M1.8** — Add setuid/setgid hooks, emit identity-change events — six `sys_exit_set*id` tracepoints over one shared helper, emitting only on `ret == 0` so failed privilege attempts are not reported as successes. Repeated no-op calls are suppressed in the Go reader (`sensor/identity.go`): one `sudo` went from 28 events to the 4 real transitions
+- [ ] **M1.8b** — *(deferred from M1.8)* Capabilities tracking — needs a `commit_creds` kprobe and reading `cred->cap_effective`, a different probe type from the tracepoints above, and probably a new struct field for the capability bitmask
+- [x] **M1.9** — Add `cilium/ebpf` to `go.mod`; write the Go loader in a `sensor/` package: load object → attach programs → read ring buffer → decode → print structured events to stdout — attachment is driven entirely by each program's `SEC()` name (no hook list in Go), so adding a probe needs no change to `sensor/`. Verified: all 8 programs attach and all three event types reach stdout; a single failed attach aborts startup, so a clean start proves every program loaded
 - [ ] **M1.10** — Kernel-thread filtering (PPID == 2) — implement in user space per §6.2
 - [ ] **M1.11** — Graceful shutdown: signal handling (SIGINT/SIGTERM), detach BPF programs on exit
 - [ ] **M1.12** — Unit tests for the event decoder (fed known byte layouts, expects correct struct output)
