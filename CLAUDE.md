@@ -6,6 +6,49 @@ Guidance for Claude Code when working in this repository.
 
 ---
 
+## 0. Operating rules — read before anything else
+
+These four rules override convenience. They apply to every task in this repo, without exception.
+
+### 0.1 Start of every task
+
+When I name a milestone or a coding task, your first action is always:
+
+1. Read the current milestone in `ROADMAP.md`.
+2. Produce a work plan per §7 step 1 (PLAN) — scope in/out, ordered steps, module changes, test plan, open questions.
+3. **Stop and wait for my approval.** Write no code, create no files.
+
+Never begin implementing from my request alone.
+
+**Exception — narrow, fully-specified requests I hand you directly.** Editing a doc, answering a question, renaming a symbol, fixing a line I pointed at: just do it. No `ROADMAP.md` read, no plan, no approval gate. The test is whether the request already contains its own scope. If you find yourself making design decisions I did not make, it is not narrow — stop and plan.
+
+### 0.2 You cannot run privileged commands
+
+`sudo` on this VM requires an interactive password and caches per-TTY. Your shell cannot use it. This affects apt installs, loading BPF programs, Docker, and systemd.
+
+When a step needs root: **stop, and emit a fenced copy-paste block** for me to run in my own terminal, followed by what output you need back from me. Do not attempt the command "to see if it works." Do not route around it.
+
+### 0.3 The two-attempt stop rule
+
+If the same problem defeats you twice — verifier rejection, failing integration test, build error, anything — **stop.**
+
+Report: what you tried (both attempts), the exact error output, your current hypothesis, and what you'd try next. Then wait.
+
+Do not try a third approach unprompted. Do not silently change scope to avoid the obstacle. A fast, honest block report is worth more to me than an hour of autonomous thrashing.
+
+### 0.4 What you hand me at the end of a task
+
+My role is reviewer, not driver. A task is not delivered until you give me, in this order:
+
+1. **What changed** — files touched, one line each.
+2. **The raw test output** — pasted, not summarized. `go test ./...` and `go vet ./...`.
+3. **Manual steps for me** — any privileged or interactive command I need to run, as a copy-paste block, plus what I should see.
+4. **Deviations** — anything you did that departs from the approved plan or from §4–§6, and why.
+
+Never claim tests pass. Show them passing.
+
+---
+
 ## 1. Document map
 
 | File | Owns | Grows when |
@@ -90,7 +133,7 @@ v1 is reached at the end of Milestone 3 in `ROADMAP.md`. M4 and M5 are optional.
 - **VM resources:** 4 vCPU, 4GB RAM, 30GB virtual disk; root filesystem 27GB (the Ubuntu Server installer originally left half the volume group unallocated — extended with `lvextend -l +100%FREE` + `resize2fs` on 2026-09-02)
 - **Toolchain** (verified on this VM 2026-09-02): `clang 18.1.3`, `LLVM 18.1.3`, `libbpf-dev 1.3.0` — all installed **from apt**, which is exactly what `ci.yml` does, so dev and CI stay on identical versions. Go 1.27.1 from the official tarball in `/usr/local/go`, on PATH via `/etc/profile.d/go.sh` (apt's Go is 1.22, too old for this module).
 - **Connection:** VS Code Remote-SSH → code lives on the VM, edited from the Mac. All git/build/test commands run **in the VM shell**, never on the Mac.
-- **Root access:** `sudo` requires a password and caches per-TTY, so an assistant's non-interactive shell cannot run it. Privileged steps (apt installs, loading BPF programs, Docker at M2) must be pasted into Rom's own terminal.
+- **Root access:** see §0.2. Privileged steps must be handed to Rom, never attempted.
 
 Verify environment facts with `uname -a` / `hostname -I` when it matters — the written values here are the fastest-rotting part of this doc. **After any VM rebuild or migration, re-run the M0 checks rather than trusting the checkboxes** — installed libraries (`libclang1-18`) do not imply installed tools (`clang`); use `command -v clang` and `go version`.
 
@@ -115,7 +158,7 @@ Treat these as acceptance criteria, not suggestions. Deliberately scaled to a so
 
 **5.4 DRY within reason.** Shared types and helpers live in one place. But a little duplication beats a wrong abstraction — if extracting something would couple two unrelated things, don't.
 
-**5.5 Tests for each stage.** Every milestone delivers tests appropriate to its layer: Go unit tests for decoding/parsing logic; integration tests for the DB layer once M2 lands; the sensor itself validated end-to-end via manual QA. Tests must run from a single documented command and pass before a milestone is marked done.
+**5.5 Tests for each stage.** Every milestone delivers tests appropriate to its layer: Go unit tests for decoding/parsing logic; integration tests for the DB layer once M2 lands; the sensor itself validated end-to-end via manual QA. Tests must run from a single documented command and pass before a milestone is marked done. **How those tests get written is governed by §14 — this project is test-first.**
 
 **5.6 No speculative abstraction.** Do **not** wrap dependencies (`cilium/ebpf`, the DB driver) in swappable adapter interfaces "in case we switch later." At this project's size that is ceremony, not architecture. The one contract worth designing up front is §6 — because the kernel/user-space boundary is genuinely hard to change later, not because abstraction is inherently good.
 
@@ -154,13 +197,16 @@ For each milestone in `ROADMAP.md`:
 5. **SIGN-OFF** — Rom reviews. On approval, the next milestone starts.
 
 **Rules:**
+- **Approval is required at the milestone-plan level only.** Once I approve a plan, §14 governs the work inside it — you do not need approval for each Red/Green/Refactor cycle. Write the failing test and proceed.
 - Keep planning and implementation concise — this process exists to bound scope, not generate paperwork.
-- Never silently expand scope. Surface scope changes in the plan.
+- Never silently expand scope. Surface scope changes in the plan, and if scope must change mid-implementation, stop per §0.3.
 - Prefer dedicated tools over shell one-liners; match existing code style as the codebase grows.
 
 ---
 
 ## 8. Definition of done (every milestone)
+
+> **This checklist is the authority for milestone completion.** §14.5 defines completion for a single task inside a milestone; §0.4 defines what you hand me. Where any of them appear to conflict, this checklist wins.
 
 - [ ] Approved plan implemented; scope matches (no silent additions)
 - [ ] §5 principles honored
@@ -237,3 +283,56 @@ Deliberately deferred until Milestone 2 — the final schema should be shaped by
 - **Explain conceptual questions plainly** — assume OS fundamentals, not much else.
 - **Push back honestly** on scope creep and premature optimization. Rom has a known pattern of blank-page paralysis dressed as thoroughness — call it out when it appears.
 - **Anchor to the goal:** a portfolio artifact meant to open doors at cybersecurity companies, not a production system.
+
+---
+
+## 14. Development Methodology — Test-Driven Development (TDD)
+
+This project is built test-first. These rules are binding for all code you write here.
+
+### 14.1 The core cycle — Red / Green / Refactor
+
+For every unit of behavior, in this order:
+
+1. **RED** — Write exactly ONE failing test that describes the desired behavior. Run it. Show me the failure output. A test that passes on the first run is a bug in the test, not a success.
+2. **GREEN** — Write the minimum code that makes it pass. Ugly is fine at this stage. Do not add functionality the test does not demand.
+3. **REFACTOR** — Clean up the implementation with the test as a safety net. Re-run the suite. Behavior must not change.
+
+Then repeat for the next unit of behavior.
+
+### 14.2 Hard rules
+
+- **Never write implementation code before a failing test exists for it.** If I ask for a feature, your first action is a test.
+- **One failing test at a time.** Do not write a batch of tests upfront.
+- **Never weaken, skip, or delete a test to make the suite green.** If you believe a test is wrong, stop and tell me why before touching it.
+- **Test behavior, not implementation.** Assert on the public API's inputs and outputs. Do not assert on private fields, call counts, or internal ordering unless that ordering IS the requirement.
+- **No mocking of things I own unless a real one is impractical.** Prefer real structs and in-memory fakes over mock frameworks.
+- Every bug fix starts with a failing test that reproduces the bug.
+
+### 14.3 Where TDD applies in this codebase
+
+| Layer | Approach |
+|---|---|
+| Go user-space logic (parsing, enrichment, filtering, event handling) | Strict TDD. Full unit coverage. |
+| Storage layer (PostgreSQL / TimescaleDB) | Integration tests against a real containerized DB. Test-first, but coarser granularity. |
+| eBPF / kernel-side C | Not unit-testable. Cover with integration tests: spawn a real process, assert the expected event surfaces in user space. |
+| `main()`, config loading, wiring, CLI flags | Thin by design. One smoke test. Do not chase coverage here. |
+
+Keep business logic OUT of the layers that are hard to test. If something is hard to test, that is a design signal — extract it into a pure function and test that. (This is §5.1 restated from the testing side.)
+
+### 14.4 Go testing conventions
+
+- Standard library `testing` package. Table-driven tests are the default shape.
+- Test names describe behavior: `TestParseExecEvent_TruncatedBuffer_ReturnsError`, not `TestParse2`.
+- Each table case gets a descriptive `name` field and runs under `t.Run`.
+- Tests live beside the code as `*_test.go`.
+- The full suite must pass with `go test ./...` before any work is considered done.
+- Use `t.Parallel()` where safe; guard integration tests behind `testing.Short()`.
+
+### 14.5 What "done" means
+
+A single task is done when: a failing test existed first, the implementation makes it pass, the code has been refactored, and `go test ./...` is fully green. Report per §0.4. Milestone-level completion is governed by §8.
+
+### 14.6 Coverage
+
+Do not chase a coverage percentage. High coverage on logic, near-zero on wiring, is the correct shape. Never write a test whose only purpose is to raise a number.
