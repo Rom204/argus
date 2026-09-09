@@ -23,12 +23,17 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev
 
+      # __TARGET_ARCH_arm64 is hard-coded, NOT derived from `uname -m`: bpf/vmlinux.h
+      # is a committed arm64 dump, and telling bpf_tracing.h it is on x86 would pair
+      # x86 PT_REGS macros with an arm64 struct pt_regs. This runner is x86_64, so it
+      # proves the code compiles, not that it runs — the VM is where it runs.
       - name: Build eBPF programs
         run: |
           if [ -d "bpf" ]; then
             for f in bpf/*.bpf.c; do
               [ -e "$f" ] || continue
-              clang -O2 -g -target bpf -I/usr/include/$(uname -m)-linux-gnu -c "$f" -o "${f%.c}.o"
+              clang -O2 -g -target bpf -D__TARGET_ARCH_arm64 \
+                -I/usr/include/$(uname -m)-linux-gnu -c "$f" -o "${f%.c}.o"
             done
           fi
 

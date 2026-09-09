@@ -21,9 +21,9 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ## Current status
 
-**Where we are right now:** Milestone 1 partially complete. Toolchain re-verified on the rebuilt Server VM (2026-09-02). Build pipeline works end-to-end (BPF compiles, `go vet`/`build`/`test` clean), and the event contract in `bpf/event.h` is defined and layout-locked. The sensor itself is still a hello-world with no ring buffer and no loader.
+**Where we are right now:** Milestone 1 code-complete, pending manual QA. All nine probes (8 tracepoints + the `commit_creds` kprobe) compile and load, the Go agent decodes v2 events and prints them, kernel threads are filtered, and Ctrl+C shuts down cleanly. 15 unit tests green across `event/` and `sensor/`.
 
-**Next actionable sub-task:** M1.6 — add a BPF ring buffer map and emit a real execve event through it.
+**Next actionable sub-task:** M1.13 — manual QA on the VM (needs `sudo`, so it is Rom's to run). Everything above it is done.
 
 ---
 
@@ -60,11 +60,11 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 - [x] **M1.6** — Add a BPF ring buffer map to `sensor.bpf.c`, emit an execve event through it (replace `bpf_printk`) — 256KB ringbuf; hook moved from `sys_enter_execve` to `sched/sched_process_exec` so `comm` is the *new* binary and failed execs are not reported. Verified: executing a renamed copy of `/bin/true` produced exactly one EXECVE with `comm=argustest`
 - [x] **M1.7** — Add `sched_process_exit` tracepoint hook, emit exit events — the tracepoint fires per *task*, so the hook emits only when `pid == tgid` (the thread group leader), which is what "a process exited" means. Verified with an 8-thread fixture: 9 tasks terminated, exactly 1 EXIT event, on the leader's pid
 - [x] **M1.8** — Add setuid/setgid hooks, emit identity-change events — six `sys_exit_set*id` tracepoints over one shared helper, emitting only on `ret == 0` so failed privilege attempts are not reported as successes. Repeated no-op calls are suppressed in the Go reader (`sensor/identity.go`): one `sudo` went from 28 events to the 4 real transitions
-- [ ] **M1.8b** — *(deferred from M1.8)* Capabilities tracking — needs a `commit_creds` kprobe and reading `cred->cap_effective`, a different probe type from the tracepoints above, and probably a new struct field for the capability bitmask
+- [x] **M1.8b** — *(deferred from M1.8)* Capabilities tracking — a `kprobe/commit_creds` reading `cred->cap_effective`, plus a `cap_effective` field appended to the event contract (48 → 56 bytes, version 1 → 2). Every event type now carries the caps in force, not just the ones that change them. The kprobe overlaps the set\*id tracepoints on purpose — it also catches `capset()` and the file capabilities a binary gains at exec — and the duplicate is collapsed in user space, where `identityTracker` now dedups on the `(uid, gid, caps)` triple across event types. Two build consequences: `bpf_tracing.h` forced `-D__TARGET_ARCH_arm64` into the compile command, and `kernel_cap_t` is a plain `u64` only since kernel 6.3. Manual QA then forced two corrections: the probe now compares the incoming cred against the task's current one and stays silent when nothing changed (exec calls `commit_creds`, which was costing 211 redundant events out of 226 execs), and the Go tracker reports capability *gains* only, since `sudo` and `ping` legitimately raise and drop privilege several times per run
 - [x] **M1.9** — Add `cilium/ebpf` to `go.mod`; write the Go loader in a `sensor/` package: load object → attach programs → read ring buffer → decode → print structured events to stdout — attachment is driven entirely by each program's `SEC()` name (no hook list in Go), so adding a probe needs no change to `sensor/`. Verified: all 8 programs attach and all three event types reach stdout; a single failed attach aborts startup, so a clean start proves every program loaded
-- [ ] **M1.10** — Kernel-thread filtering (PPID == 2) — implement in user space per §6.2
-- [ ] **M1.11** — Graceful shutdown: signal handling (SIGINT/SIGTERM), detach BPF programs on exit
-- [ ] **M1.12** — Unit tests for the event decoder (fed known byte layouts, expects correct struct output)
+- [x] **M1.10** — Kernel-thread filtering (PPID == 2) — implemented in user space per §6.2 as `isKernelThread` in `sensor/filter.go`, matching kthreadd itself and its children; covered by `sensor/filter_test.go`
+- [x] **M1.11** — Graceful shutdown: signal handling (SIGINT/SIGTERM), detach BPF programs on exit — `signal.NotifyContext` in `main.go`; cancelling the context closes the ring buffer reader, which unblocks `Run`, and `Sensor.Close` detaches every link
+- [x] **M1.12** — Unit tests for the event decoder (fed known byte layouts, expects correct struct output) — `event/event_test.go`: full record, comm filling the field with no NUL, wrong size rejected, wrong version rejected, type rendering
 - [ ] **M1.13** — Manual QA: run agent, spawn processes (`sleep 1 &`, `su -c 'id'`, etc.), verify correct structured output; run kernel workload (`stress-ng`), verify no kernel threads leak through
 
 **Done when:** on the VM, `sudo ./argus` prints one correctly-structured line per user-space process create/exit/setuid event, kernel threads are absent from output, and Ctrl+C shuts down cleanly.

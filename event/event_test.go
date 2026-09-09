@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-// record builds a well-formed 48-byte record at the offsets bpf/event.h
+// record builds a well-formed 56-byte record at the offsets bpf/event.h
 // declares. Written independently of the decoder's own constants where it
 // matters, so a wrong offset in event.go shows up as a test failure rather
 // than cancelling out.
-func record(ts uint64, version uint32, typ Type, pid, ppid, uid, gid uint32, comm string) []byte {
+func record(ts uint64, version uint32, typ Type, pid, ppid, uid, gid uint32, comm string, caps uint64) []byte {
 	b := make([]byte, Size)
 	binary.NativeEndian.PutUint64(b[0:], ts)
 	binary.NativeEndian.PutUint32(b[8:], version)
@@ -20,11 +20,16 @@ func record(ts uint64, version uint32, typ Type, pid, ppid, uid, gid uint32, com
 	binary.NativeEndian.PutUint32(b[24:], uid)
 	binary.NativeEndian.PutUint32(b[28:], gid)
 	copy(b[32:48], comm)
+	binary.NativeEndian.PutUint64(b[48:], caps)
 	return b
 }
 
+// capNetRaw is bit 13 of the capability mask — what /usr/bin/ping carries as a
+// file capability, and the mask the manual QA expects to see.
+const capNetRaw = uint64(1) << 13
+
 func TestUnmarshal(t *testing.T) {
-	raw := record(1234567890, Version, TypeExecve, 4242, 1000, 1001, 1002, "bash")
+	raw := record(1234567890, Version, TypeExecve, 4242, 1000, 1001, 1002, "bash", capNetRaw)
 
 	got, err := Unmarshal(raw)
 	if err != nil {
@@ -32,14 +37,15 @@ func TestUnmarshal(t *testing.T) {
 	}
 
 	want := ProcessEvent{
-		TimestampNS: 1234567890,
-		Version:     Version,
-		Type:        TypeExecve,
-		PID:         4242,
-		PPID:        1000,
-		UID:         1001,
-		GID:         1002,
-		Comm:        "bash",
+		TimestampNS:  1234567890,
+		Version:      Version,
+		Type:         TypeExecve,
+		PID:          4242,
+		PPID:         1000,
+		UID:          1001,
+		GID:          1002,
+		Comm:         "bash",
+		CapEffective: capNetRaw,
 	}
 	if got != want {
 		t.Errorf("Unmarshal() =\n  %+v\nwant\n  %+v", got, want)
@@ -54,7 +60,7 @@ func TestUnmarshalCommFillsField(t *testing.T) {
 		t.Fatalf("test fixture is %d bytes, want %d", len(full), CommLen)
 	}
 
-	got, err := Unmarshal(record(1, Version, TypeExit, 1, 1, 0, 0, full))
+	got, err := Unmarshal(record(1, Version, TypeExit, 1, 1, 0, 0, full, 0))
 	if err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
@@ -89,7 +95,7 @@ func TestUnmarshalRejectsWrongSize(t *testing.T) {
 // The version field exists so a stale BPF object meeting a newer agent is
 // detectable instead of silently misread.
 func TestUnmarshalRejectsWrongVersion(t *testing.T) {
-	_, err := Unmarshal(record(1, Version+1, TypeExecve, 1, 1, 0, 0, "x"))
+	_, err := Unmarshal(record(1, Version+1, TypeExecve, 1, 1, 0, 0, "x", 0))
 
 	var bad ErrBadVersion
 	if !errors.As(err, &bad) {
@@ -105,6 +111,7 @@ func TestTypeString(t *testing.T) {
 		TypeExecve: "EXECVE",
 		TypeExit:   "EXIT",
 		TypeSetuid: "SETUID",
+		TypeCaps:   "CAPS",
 		Type(99):   "TYPE(99)",
 	}
 	for typ, want := range tests {

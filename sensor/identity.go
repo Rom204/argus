@@ -2,10 +2,13 @@ package sensor
 
 import "github.com/Rom204/argus/event"
 
-// identity is the credential pair Argus tracks per process.
+// identity is the credential set Argus tracks per process. Capabilities are
+// part of it because a process can gain privilege without any uid changing —
+// a binary with file capabilities does exactly that.
 type identity struct {
-	uid uint32
-	gid uint32
+	uid  uint32
+	gid  uint32
+	caps uint64
 }
 
 // identityTracker suppresses set*id events that did not actually change
@@ -33,7 +36,7 @@ func newIdentityTracker() *identityTracker {
 // the map to live processes and prevents a recycled PID from inheriting the
 // previous occupant's credentials.
 func (t *identityTracker) observe(ev event.ProcessEvent) bool {
-	current := identity{uid: ev.UID, gid: ev.GID}
+	current := identity{uid: ev.UID, gid: ev.GID, caps: ev.CapEffective}
 
 	switch ev.Type {
 	case event.TypeExecve:
@@ -44,18 +47,54 @@ func (t *identityTracker) observe(ev event.ProcessEvent) bool {
 		delete(t.seen, ev.PID)
 		return true
 
-	case event.TypeSetuid:
+	case event.TypeSetuid, event.TypeCaps:
+		// Both types describe the same thing — the credentials a process
+		// now holds — so they are compared against one shared baseline.
+		// A sudo seen by both the commit_creds kprobe and the setresuid
+		// tracepoint therefore prints once, not twice.
+		//
 		// A process first seen mid-flight has no baseline, so its first
 		// identity event is reported: we cannot claim nothing changed.
-		if previous, known := t.seen[ev.PID]; known && previous == current {
+		previous, known := t.seen[ev.PID]
+		if !known {
+			t.seen[ev.PID] = current
+			return true
+		}
+
+		if previous == current {
 			return false
 		}
+
+		// Giving up privilege is not a threat signal. Suppressing the drop
+		// *without recording it* leaves the baseline at the highest
+		// privilege the process has held, so taking that level back is
+		// recognised as a no-op too — which is what collapses ping's and
+		// sudo's raise/drop cycles down to their one real escalation.
+		if isPrivilegeDrop(previous, current) {
+			return false
+		}
+
 		t.seen[ev.PID] = current
 		return true
 
 	default:
 		return true
 	}
+}
+
+// isPrivilegeDrop reports whether current is strictly less privileged than
+// previous: the same user and group, and not one capability bit that previous
+// did not already hold.
+//
+// Any uid or gid change disqualifies it, however the capabilities move — a
+// process becoming a different user is a transition worth reporting even when
+// it sheds capabilities on the way.
+func isPrivilegeDrop(previous, current identity) bool {
+	if current.uid != previous.uid || current.gid != previous.gid {
+		return false
+	}
+	gained := current.caps &^ previous.caps
+	return gained == 0
 }
 
 // tracked reports how many processes currently hold state, for tests.

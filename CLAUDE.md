@@ -226,7 +226,8 @@ There is no Makefile. These are the exact commands CI runs and the same ones to 
 ```bash
 # Compile all eBPF programs (run from repo root)
 for f in bpf/*.bpf.c; do
-  clang -O2 -g -target bpf -I/usr/include/$(uname -m)-linux-gnu -c "$f" -o "${f%.c}.o"
+  clang -O2 -g -target bpf -D__TARGET_ARCH_arm64 \
+    -I/usr/include/$(uname -m)-linux-gnu -c "$f" -o "${f%.c}.o"
 done
 
 go vet ./...
@@ -234,7 +235,7 @@ go build ./...
 go test ./...          # single test: go test ./... -run TestName
 ```
 
-The `-I/usr/include/$(uname -m)-linux-gnu` flag is load-bearing — see `KNOWLEDGE_BASE.md` before touching the compile command.
+Both flags are load-bearing — see `KNOWLEDGE_BASE.md` before touching the compile command. `-I/usr/include/$(uname -m)-linux-gnu` resolves `asm/types.h`; `-D__TARGET_ARCH_arm64` is what `bpf_tracing.h` needs to pick its `PT_REGS_*` macros for kprobes (under `-target bpf` no host arch macro exists, so its fallback finds nothing and the build fails outright). It is hard-coded rather than derived from `uname -m` because `bpf/vmlinux.h` is a committed arm64 dump — CI's x86_64 runner must still compile it as arm64.
 
 ---
 

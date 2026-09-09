@@ -14,6 +14,7 @@
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
+#include <bpf/bpf_tracing.h>
 
 #include "event.h"
 
@@ -57,9 +58,21 @@ static __always_inline struct process_event *event_begin(__u32 type)
 	task = (struct task_struct *)bpf_get_current_task();
 	e->ppid = BPF_CORE_READ(task, real_parent, tgid);
 
+	/* Note this is the *real* uid/gid: the helper reads cred->uid and
+	 * cred->gid, not the effective pair. event.h documents it as such, and
+	 * the CAPS handler below must read the same fields so user space is
+	 * comparing like with like. */
 	uid_gid = bpf_get_current_uid_gid();
 	e->uid = (__u32)uid_gid;
 	e->gid = uid_gid >> 32;
+
+	/* Capabilities in force right now. Read from the task we already have,
+	 * so every event type carries it — a process's privilege is then
+	 * visible at exec and exit, not only when it changes.
+	 *
+	 * kernel_cap_t became a single u64 in kernel 6.3 (it was u32 cap[2]
+	 * before), so `.val` does not compile against an older vmlinux.h. */
+	e->cap_effective = BPF_CORE_READ(task, cred, cap_effective.val);
 
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 
@@ -156,3 +169,69 @@ int handle_setresuid(struct trace_event_raw_sys_exit *ctx) { return handle_setid
 
 SEC("tp/syscalls/sys_exit_setresgid")
 int handle_setresgid(struct trace_event_raw_sys_exit *ctx) { return handle_setid(ctx); }
+
+/*
+ * Capability changes.
+ *
+ * commit_creds() is the single chokepoint through which every credential set
+ * is installed on a task, so it catches what the set*id tracepoints cannot:
+ * capset(), and the file capabilities a binary gains at exec (ping picking up
+ * CAP_NET_RAW). It overlaps with those tracepoints on setuid — deliberately:
+ * user space collapses the duplicate, and the tracepoints remain as the
+ * syscall-level record.
+ *
+ * At kprobe entry the task still holds its OLD credentials, so
+ * bpf_get_current_uid_gid() and the cap read in event_begin() are both stale
+ * here. Every identity field is therefore re-read from `new`, the cred set
+ * about to be installed — which is what event.h says these fields mean.
+ *
+ * The old cred being still in place is also what makes the comparison below
+ * possible, and that comparison is load-bearing rather than an optimisation:
+ * *exec itself calls commit_creds*, so without it every process start would
+ * emit a credential event describing credentials the task already had. QA
+ * measured 211 such events out of 226 execs. Comparing here kills them at the
+ * source, for every process — including the ones that were already running
+ * when Argus started, which user space knows nothing about.
+ *
+ * This does mean the probe decides something, against the general rule in
+ * CLAUDE.md §6.2 that producers stay dumb. It is the same exception as the
+ * pid == tgid test in handle_exit(): "the credentials changed" is what this
+ * event *means*, not a policy about which changes are interesting. Policy —
+ * which of the real changes are worth printing — still lives in Go.
+ *
+ * This is the first kprobe in the file. Unlike a tracepoint it hooks a kernel
+ * symbol whose arguments are read through PT_REGS macros, which is why
+ * bpf_tracing.h and -D__TARGET_ARCH_arm64 are needed (see CLAUDE.md §9).
+ */
+SEC("kprobe/commit_creds")
+int BPF_KPROBE(handle_commit_creds, struct cred *new)
+{
+	struct process_event *e;
+	struct task_struct *task;
+	const struct cred *old;
+	__u32 uid, gid;
+	__u64 caps;
+
+	uid = BPF_CORE_READ(new, uid.val);
+	gid = BPF_CORE_READ(new, gid.val);
+	caps = BPF_CORE_READ(new, cap_effective.val);
+
+	task = (struct task_struct *)bpf_get_current_task();
+	old = BPF_CORE_READ(task, cred);
+
+	if (uid == BPF_CORE_READ(old, uid.val) &&
+	    gid == BPF_CORE_READ(old, gid.val) &&
+	    caps == BPF_CORE_READ(old, cap_effective.val))
+		return 0;
+
+	e = event_begin(ARGUS_EVENT_CAPS);
+	if (!e)
+		return 0;
+
+	e->uid = uid;
+	e->gid = gid;
+	e->cap_effective = caps;
+
+	bpf_ringbuf_submit(e, 0);
+	return 0;
+}

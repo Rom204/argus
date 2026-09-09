@@ -117,6 +117,35 @@
 - **Resolution:** installed `clang llvm libbpf-dev` from apt and Go 1.27.1 from the official tarball into `/usr/local/go`, with PATH set via `/etc/profile.d/go.sh`. Then re-ran every M0/M1 checkbox against the live machine instead of trusting the doc.
 - **Watch for:** a checkbox records that something *was* verified, not that it *is* true. After any VM rebuild, snapshot restore, or host migration, re-run the verification rather than migrating the checkmarks — and prefer `command -v clang` / `go version` over reading `dpkg -l`, since installed libraries do not imply installed tools.
 
+### Issue: the first kprobe would not compile — `Must specify a BPF target arch via __TARGET_ARCH_xxx`
+
+- **Root Cause:** kprobes read their arguments through `PT_REGS_PARM*`, which live in `bpf/bpf_tracing.h`. That header picks the right macros for the target CPU from a `__TARGET_ARCH_*` define, and when none is set it falls back to the compiler's own host macros (`__aarch64__`, `__x86_64__`). Under `clang -target bpf` **none of those exist** — the target is BPF, not the host — so the fallback finds nothing and the build fails on the first `BPF_KPROBE`. Tracepoints never hit this because they take a typed context struct straight from `vmlinux.h` and never touch `pt_regs`, which is why eight probes compiled fine before this one.
+- **Resolution:** added `-D__TARGET_ARCH_arm64` to the compile loop in `CLAUDE.md` §9 and `ci.yml`. Every libbpf project does this; it is standard, not a workaround.
+- **Watch for:** the flag is hard-coded to `arm64` rather than derived from `uname -m` **on purpose**. `bpf/vmlinux.h` is a committed arm64 dump, so CI's x86_64 runner must compile it as arm64 too — telling `bpf_tracing.h` it is on x86 would pair x86 register macros with an arm64 `struct pt_regs`. It follows that CI proves the BPF code *compiles*, never that it *runs*; the VM is the only place that is established.
+
+### Issue: `bpf_get_current_uid_gid()` does not return the effective uid/gid
+
+- **Root Cause:** the helper reads `cred->uid` and `cred->gid` — the **real** ids. `bpf/event.h` documented those fields as "effective" from M1.5 onward, which was simply wrong. It went unnoticed because for most processes the two are equal, and `sudo` transitions move both.
+- **Resolution:** corrected the comment; the captured value was left alone, since changing it would silently alter signed-off M1.8 behaviour. The `commit_creds` kprobe added in M1.8b therefore reads `new->uid`/`new->gid` (real) rather than `new->euid`/`new->egid`, so both probes report the same kind of id and user-space dedup compares like with like.
+- **Watch for:** capturing euid/egid as well is a reasonable future change, but it means new struct fields and a version bump — not a redefinition of the existing ones.
+
+### Issue: the `commit_creds` kprobe doubled the output on every exec — and the first fix did not work
+
+- **Root Cause:** `commit_creds()` is the chokepoint for installing any credential set, which is exactly why it is worth hooking — it sees `capset()` and the file capabilities a binary gains at exec, neither of which any `set*id` syscall reports. But **exec itself calls it**, so every process start emitted a CAPS event describing credentials the process had merely inherited, immediately followed by the EXECVE event.
+- **First attempt (wrong):** compare an unseen PID against its **parent's** recorded credentials in `identityTracker`, on the reasoning that a fork copies the parent's creds. Manual QA measured **211 redundant events out of 226 execs** — the rule almost never fired. The parent is normally a login shell or daemon that started *before* Argus, so it is not in the map and there is no baseline to compare against. It only worked when the parent had itself exec'd after startup, which is the minority case in any real deployment.
+- **Resolution:** compare in the **probe** instead. At kprobe entry the task still holds its old cred, so the handler reads `current->cred` and emits only when uid, gid or `cap_effective` actually differ from the incoming set. Exec of an ordinary binary installs identical values, so no event is generated at all — for every process, including ones that predate the agent. The parent-fallback rule was then deleted: with the kernel comparing, it could only cause *false* suppression (a child legitimately transitioning to the same credentials its parent holds).
+- **Watch for:** this is a probe making a decision, against §6.2's "producers stay dumb". It is the same class of exception as the `pid == tgid` test in `handle_exit()` — "the credentials changed" is what the event *means*, not a policy about which changes matter. Policy stayed in Go.
+
+### Issue: one `sudo` produced 13 capability events, all of them genuine
+
+- **Root Cause:** not a bug, and not deduplicable — `sudo` and `ping` both raise their effective capability set, do the privileged work, and drop it again, several times per run. Every one of those transitions really did change `cap_effective`, so comparing against the previous value could not collapse them. M1.8 had got `sudo` down to 4 events; M1.8b took it back up to 13.
+- **Resolution:** report **gains, not drops** (`sensor/identity.go`). A transition with the same uid/gid that adds no capability bit is suppressed *and not recorded*, so the stored baseline stays at the highest privilege the process has held — which means taking that level back afterwards is also recognised as a no-op. A raise/drop/raise cycle collapses to its first escalation. Any uid or gid change is exempt and always reported, however the capabilities move.
+- **Why this is the right filter:** losing privilege is not a threat signal. Gaining it is. Keeping the high-water mark rather than the current value is what makes the second half of each cycle quiet, and it is the part that is easy to get wrong — recording the drop would make the re-raise look like a fresh escalation.
+
+### Concept: `kernel_cap_t` changed shape in kernel 6.3
+
+- Capability masks are read as `cred->cap_effective.val`, a single `u64`. Before kernel 6.3 `kernel_cap_t` was `u32 cap[2]`, so that expression does not compile against an older `vmlinux.h` — it would need `.cap[0] | ((u64).cap[1] << 32)`. Fine here (the VM runs 6.8), but it is a real CO-RE limit: CO-RE relocates *offsets* across kernels, it does not rewrite a field that changed its type.
+
 ---
 
 ## Concepts learned (appendix)

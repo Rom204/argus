@@ -24,7 +24,7 @@
 #include <linux/types.h>
 #endif
 
-#define ARGUS_EVENT_VERSION 1u
+#define ARGUS_EVENT_VERSION 2u
 
 /* Matches the kernel's TASK_COMM_LEN; bpf_get_current_comm() expects exactly this. */
 #define ARGUS_COMM_LEN 16
@@ -34,6 +34,10 @@ enum argus_event_type {
 	ARGUS_EVENT_EXECVE = 1,
 	ARGUS_EVENT_EXIT   = 2,
 	ARGUS_EVENT_SETUID = 3,
+	/* A credential set was installed (commit_creds). Broader than SETUID:
+	 * it also covers capset() and the file capabilities a binary picks up
+	 * at exec, neither of which any set*id syscall reports. */
+	ARGUS_EVENT_CAPS   = 4,
 };
 
 struct process_event {
@@ -48,18 +52,26 @@ struct process_event {
 	__u32 pid;            /* offset 16 */
 	__u32 ppid;           /* offset 20 */
 
-	/* Effective uid/gid at emit time. For SETUID events this is the value
-	 * *after* the transition; old->new pairs would need new fields + a
-	 * version bump. */
+	/* REAL uid/gid at emit time — bpf_get_current_uid_gid() reads cred->uid
+	 * and cred->gid, not the effective pair. For SETUID and CAPS events
+	 * this is the value *after* the transition; old->new pairs would need
+	 * new fields + a version bump. */
 	__u32 uid;            /* offset 24 */
 	__u32 gid;            /* offset 28 */
 
 	char  comm[ARGUS_COMM_LEN];  /* offset 32 — NUL-padded, not a full path */
+
+	/* Effective capability mask (cred->cap_effective), the caps actually in
+	 * force. Present on every event type, so a process's privilege is
+	 * visible at exec and exit, not only when it changes. */
+	__u64 cap_effective;  /* offset 48 */
 };
 
-_Static_assert(sizeof(struct process_event) == 48,
+_Static_assert(sizeof(struct process_event) == 56,
 	       "process_event layout changed - update the Go decoder and DB schema");
 _Static_assert(__builtin_offsetof(struct process_event, comm) == 32,
+	       "process_event field order changed - update the Go decoder");
+_Static_assert(__builtin_offsetof(struct process_event, cap_effective) == 48,
 	       "process_event field order changed - update the Go decoder");
 
 #endif /* __ARGUS_EVENT_H */

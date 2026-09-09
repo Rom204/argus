@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -24,13 +23,6 @@ import (
 // ringbufMapName must match the map declared in bpf/sensor.bpf.c.
 const ringbufMapName = "events"
 
-// kthreaddPID is the PID of kthreadd, the parent of every kernel thread.
-// Kernel threads are not user-space processes and are out of scope (CLAUDE.md
-// §4.2), so they are filtered here in user space rather than in the probes —
-// §6.2 keeps producers dumb and puts filtering wherever it is cheapest to
-// express correctly.
-const kthreaddPID = 2
-
 // Sensor owns the loaded BPF objects and the ring buffer reader.
 type Sensor struct {
 	coll   *ebpf.Collection
@@ -40,9 +32,10 @@ type Sensor struct {
 
 // New loads the compiled BPF object and attaches every program in it.
 //
-// Attachment is driven entirely by each program's SEC() name, so adding a hook
-// in the C source needs no change here (CLAUDE.md §6.2: the read loop is
-// written once).
+// Attachment is driven entirely by each program's SEC() name, so adding a probe
+// of an already-supported kind — another tracepoint, another kprobe — needs no
+// change here (CLAUDE.md §6.2: the read loop is written once). A genuinely new
+// kind needs one case in programAttachTarget and one in attach.
 func New(object []byte) (*Sensor, error) {
 	// Older kernels cap locked memory for BPF maps. Harmless on 5.11+, which
 	// charges maps to the cgroup instead.
@@ -69,16 +62,18 @@ func New(object []byte) (*Sensor, error) {
 	s := &Sensor{coll: coll}
 
 	for name, prog := range coll.Programs {
-		group, tp, err := tracepointTarget(spec.Programs[name].AttachTo)
+		progSpec := spec.Programs[name]
+
+		target, err := programAttachTarget(progSpec.Type, progSpec.AttachTo)
 		if err != nil {
 			s.Close()
 			return nil, fmt.Errorf("program %q: %w", name, err)
 		}
 
-		l, err := link.Tracepoint(group, tp, prog, nil)
+		l, err := attach(target, prog)
 		if err != nil {
 			s.Close()
-			return nil, fmt.Errorf("attach %q to %s/%s: %w", name, group, tp, err)
+			return nil, fmt.Errorf("attach %q to %s: %w", name, progSpec.SectionName, err)
 		}
 		s.links = append(s.links, l)
 	}
@@ -93,14 +88,15 @@ func New(object []byte) (*Sensor, error) {
 	return s, nil
 }
 
-// tracepointTarget splits an AttachTo value such as "sched/sched_process_exec"
-// into its tracepoint group and name.
-func tracepointTarget(attachTo string) (group, name string, err error) {
-	group, name, found := strings.Cut(attachTo, "/")
-	if !found || group == "" || name == "" {
-		return "", "", fmt.Errorf("cannot parse tracepoint target %q, want group/name", attachTo)
+// attach performs the attachment programAttachTarget decided on. It is the
+// only part of the dispatch that needs a live kernel.
+func attach(target attachTarget, prog *ebpf.Program) (link.Link, error) {
+	switch target.kind {
+	case attachKprobe:
+		return link.Kprobe(target.name, prog, nil)
+	default:
+		return link.Tracepoint(target.group, target.name, prog, nil)
 	}
-	return group, name, nil
 }
 
 // Run reads events until ctx is cancelled, passing each decoded event to handle.
@@ -133,7 +129,7 @@ func (s *Sensor) Run(ctx context.Context, handle func(event.ProcessEvent)) error
 			continue
 		}
 
-		if ev.PID == kthreaddPID || ev.PPID == kthreaddPID {
+		if isKernelThread(ev) {
 			continue
 		}
 

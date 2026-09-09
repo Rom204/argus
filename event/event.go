@@ -17,13 +17,13 @@ import (
 const (
 	// Size is sizeof(struct process_event). The C side holds this with a
 	// _Static_assert, so a layout change breaks the BPF build first.
-	Size = 48
+	Size = 56
 
 	// CommLen matches ARGUS_COMM_LEN (the kernel's TASK_COMM_LEN).
 	CommLen = 16
 
 	// Version matches ARGUS_EVENT_VERSION.
-	Version = 1
+	Version = 2
 )
 
 // Field offsets within a record, matching bpf/event.h.
@@ -36,6 +36,7 @@ const (
 	offUID       = 24
 	offGID       = 28
 	offComm      = 32
+	offCaps      = 48
 )
 
 // Type identifies what the kernel observed. Values match enum argus_event_type.
@@ -45,6 +46,7 @@ const (
 	TypeExecve Type = 1
 	TypeExit   Type = 2
 	TypeSetuid Type = 3
+	TypeCaps   Type = 4
 )
 
 func (t Type) String() string {
@@ -55,6 +57,8 @@ func (t Type) String() string {
 		return "EXIT"
 	case TypeSetuid:
 		return "SETUID"
+	case TypeCaps:
+		return "CAPS"
 	default:
 		return fmt.Sprintf("TYPE(%d)", uint32(t))
 	}
@@ -69,9 +73,13 @@ type ProcessEvent struct {
 	Type        Type
 	PID         uint32 // TGID — the PID that ps shows
 	PPID        uint32
-	UID         uint32
-	GID         uint32
+	UID         uint32 // real uid, not effective — see bpf/event.h
+	GID         uint32 // real gid, not effective
 	Comm        string // task name, NUL-trimmed; not a full path
+
+	// CapEffective is the capability mask actually in force, one bit per
+	// capability (CAP_NET_RAW is bit 13, so ping reads 0x2000).
+	CapEffective uint64
 }
 
 // ErrBadSize means the record was not exactly Size bytes, so the kernel and
@@ -102,14 +110,15 @@ func Unmarshal(b []byte) (ProcessEvent, error) {
 	}
 
 	e := ProcessEvent{
-		TimestampNS: binary.NativeEndian.Uint64(b[offTimestamp:]),
-		Version:     binary.NativeEndian.Uint32(b[offVersion:]),
-		Type:        Type(binary.NativeEndian.Uint32(b[offType:])),
-		PID:         binary.NativeEndian.Uint32(b[offPID:]),
-		PPID:        binary.NativeEndian.Uint32(b[offPPID:]),
-		UID:         binary.NativeEndian.Uint32(b[offUID:]),
-		GID:         binary.NativeEndian.Uint32(b[offGID:]),
-		Comm:        commString(b[offComm : offComm+CommLen]),
+		TimestampNS:  binary.NativeEndian.Uint64(b[offTimestamp:]),
+		Version:      binary.NativeEndian.Uint32(b[offVersion:]),
+		Type:         Type(binary.NativeEndian.Uint32(b[offType:])),
+		PID:          binary.NativeEndian.Uint32(b[offPID:]),
+		PPID:         binary.NativeEndian.Uint32(b[offPPID:]),
+		UID:          binary.NativeEndian.Uint32(b[offUID:]),
+		GID:          binary.NativeEndian.Uint32(b[offGID:]),
+		Comm:         commString(b[offComm : offComm+CommLen]),
+		CapEffective: binary.NativeEndian.Uint64(b[offCaps:]),
 	}
 
 	if e.Version != Version {
@@ -127,7 +136,9 @@ func commString(b []byte) string {
 	return string(b)
 }
 
+// String renders one event as a single line. The capability mask is printed in
+// hex — it is a bitmask, and decimal makes it unreadable.
 func (e ProcessEvent) String() string {
-	return fmt.Sprintf("%-6s pid=%-7d ppid=%-7d uid=%-5d gid=%-5d comm=%s",
-		e.Type, e.PID, e.PPID, e.UID, e.GID, e.Comm)
+	return fmt.Sprintf("%-6s pid=%-7d ppid=%-7d uid=%-5d gid=%-5d caps=%#-16x comm=%s",
+		e.Type, e.PID, e.PPID, e.UID, e.GID, e.CapEffective, e.Comm)
 }
