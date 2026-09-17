@@ -146,6 +146,19 @@
 
 - Capability masks are read as `cred->cap_effective.val`, a single `u64`. Before kernel 6.3 `kernel_cap_t` was `u32 cap[2]`, so that expression does not compile against an older `vmlinux.h` — it would need `.cap[0] | ((u64).cap[1] << 32)`. Fine here (the VM runs 6.8), but it is a real CO-RE limit: CO-RE relocates *offsets* across kernels, it does not rewrite a field that changed its type.
 
+### Known gap (deferred 2026-09-17): processes created by `fork()` without `exec` are invisible until they exit
+
+- **Symptom:** M1.13 QA output showed EXIT lines for PIDs that never had an EXECVE — `sudo`'s child, a `( ... )` subshell, `$(...)` command substitutions inside a script. The process tree has holes: `true` ran with a parent PID that Argus never saw created.
+- **Root Cause:** the only creation hook is `sched_process_exec`. A `fork()` that never execs produces no event there; `sched_process_exit` still fires for it, which is why it shows up at the end and nowhere else.
+- **Resolution:** deferred by Rom's decision, not fixed. `CLAUDE.md` §4.3 lists fork as in scope, so this is a known miss against spec. The fix is a `tp/sched/sched_process_fork` probe emitting a new `ARGUS_EVENT_FORK` type — additive under the §6.2 contract.
+- **Watch for:** M2's `processes` table is keyed on process creation. Designed around EXECVE alone, it will need a migration once FORK lands. Decide at M2 planning time whether to leave room for it.
+
+### Concept: reading M1.13 output — ordering and background noise
+
+- **CAPS appears before EXECVE for file-capability binaries** (`ping`, `sudo`). `commit_creds` runs partway through exec, and `sched_process_exec` only fires once exec has finished. Correct, not a race.
+- **Periodic `sh` / `which` / `ps` / `cpuUsage.sh` every ~5s** come from the VS Code Remote-SSH server's `ptyHost` process polling resource usage. Real processes, correctly captured — expect them in any capture taken while connected over Remote-SSH.
+- **The first line can be an EXIT with no EXECVE** for a process started before the probes attached. Not a bug.
+
 ---
 
 ## Concepts learned (appendix)

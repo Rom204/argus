@@ -23,7 +23,7 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 **Where we are right now:** Milestone 1 code-complete, pending manual QA. All nine probes (8 tracepoints + the `commit_creds` kprobe) compile and load, the Go agent decodes v2 events and prints them, kernel threads are filtered, and Ctrl+C shuts down cleanly. 15 unit tests green across `event/` and `sensor/`.
 
-**Next actionable sub-task:** M1.13 — manual QA on the VM (needs `sudo`, so it is Rom's to run). Everything above it is done.
+**Next actionable sub-task:** M1.13 `stress-ng` check (Rom, needs `sudo`). Process-spawn QA passed 2026-09-17. Fork-without-exec gap deferred — see the note under M1.13.
 
 ---
 
@@ -65,7 +65,9 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 - [x] **M1.10** — Kernel-thread filtering (PPID == 2) — implemented in user space per §6.2 as `isKernelThread` in `sensor/filter.go`, matching kthreadd itself and its children; covered by `sensor/filter_test.go`
 - [x] **M1.11** — Graceful shutdown: signal handling (SIGINT/SIGTERM), detach BPF programs on exit — `signal.NotifyContext` in `main.go`; cancelling the context closes the ring buffer reader, which unblocks `Run`, and `Sensor.Close` detaches every link
 - [x] **M1.12** — Unit tests for the event decoder (fed known byte layouts, expects correct struct output) — `event/event_test.go`: full record, comm filling the field with no NUL, wrong size rejected, wrong version rejected, type rendering
-- [ ] **M1.13** — Manual QA: run agent, spawn processes (`sleep 1 &`, `su -c 'id'`, etc.), verify correct structured output; run kernel workload (`stress-ng`), verify no kernel threads leak through
+- [ ] **M1.13** — Manual QA: run agent, spawn processes (`sleep 1 &`, `su -c 'id'`, etc.), verify correct structured output; run kernel workload (`stress-ng`), verify no kernel threads leak through — *2026-09-17: process-spawn half passed (EXECVE/EXIT/CAPS correct for `true`, `id`, `ping` → `caps=0x2000`, `sudo` → `true` as uid 0; no kernel threads). `stress-ng` half pending.*
+
+**Known gap, deferred by decision (2026-09-17):** `fork()` without `exec` produces no creation event — such processes appear only at EXIT. §4.3 lists fork as in scope; fix is an additive `sched_process_fork` probe + `FORK` event type. See `KNOWLEDGE_BASE.md`. Revisit when planning M2's `processes` table.
 
 **Done when:** on the VM, `sudo ./argus` prints one correctly-structured line per user-space process create/exit/setuid event, kernel threads are absent from output, and Ctrl+C shuts down cleanly.
 
