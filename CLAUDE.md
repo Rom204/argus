@@ -233,7 +233,16 @@ done
 go vet ./...
 go build ./...
 go test ./...          # single test: go test ./... -run TestName
+
+# Event store (M2+) — required to run the agent and the storage integration tests
+docker compose up -d
+docker compose down -v   # wipes data; needed after editing the migration
+
+# Full suite including storage integration tests (plain `go test ./...` skips them)
+ARGUS_TEST_DSN='postgres://argus:argus@127.0.0.1:5432/argus?sslmode=disable' go test ./...
 ```
+
+CI runs the integration tests against a TimescaleDB service container using the same image as `docker-compose.yml` — keep the two image tags identical.
 
 Both flags are load-bearing — see `KNOWLEDGE_BASE.md` before touching the compile command. `-I/usr/include/$(uname -m)-linux-gnu` resolves `asm/types.h`; `-D__TARGET_ARCH_arm64` is what `bpf_tracing.h` needs to pick its `PT_REGS_*` macros for kprobes (under `-target bpf` no host arch macro exists, so its fallback finds nothing and the build fails outright). It is hard-coded rather than derived from `uname -m` because `bpf/vmlinux.h` is a committed arm64 dump — CI's x86_64 runner must still compile it as arm64.
 
@@ -256,9 +265,11 @@ Soft budget policy: targets are stated in the README, current measured values ar
 
 ## 11. Data schema plan
 
-Deliberately deferred until Milestone 2 — the final schema should be shaped by real usage during the sensor build, not guessed up front.
+Decided at M2 planning (2026-09-17), shaped by what M1's QA actually showed.
 
-**Initial approach:** normalized schema with a `processes` table (one row per process instance) and a `process_events` table (identity changes, FK to `processes`). TimescaleDB hypertable on the time-series side.
+**Schema:** one append-only `events` TimescaleDB hypertable — one row per event, one column per field of `struct process_event` — plus a `processes` **view** derived from it (each EXECVE paired with the next EXIT of the same pid). Defined in `storage/migrations/001_events.sql`.
+
+**Why not the originally planned normalized `processes` + `process_events` tables with an FK:** M1 QA showed events routinely arrive for processes Argus never saw created — `fork()` without `exec`, and anything started before the agent. A strict FK needs placeholder rows and upsert logic for those; TimescaleDB also cannot FK *into* a hypertable. A raw event table keeps the storage layer one insert path, keeps the DB a faithful mirror of the §6.2 contract, and makes new event types (FORK, M3's network events) a new `type` value rather than a migration. Derived shapes are views, so they can change freely.
 
 ---
 

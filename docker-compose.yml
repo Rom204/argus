@@ -1,0 +1,39 @@
+# Local event store for the Argus agent: PostgreSQL 17 + TimescaleDB.
+#
+#   docker compose up -d      start (schema is created on first start)
+#   docker compose down -v    stop AND wipe data — required after changing the
+#                             migration, since init scripts only run on an
+#                             empty volume
+#
+# The agent itself runs on the host (it needs root to load eBPF programs) and
+# connects over 127.0.0.1.
+
+services:
+  db:
+    image: timescale/timescaledb:2.30.1-pg17
+    # Come back by itself after a VM reboot, so the store is up without anyone
+    # remembering to start it. "unless-stopped" rather than "always": an
+    # explicit `docker compose stop` stays stopped.
+    restart: unless-stopped
+    environment:
+      # Dev-only credentials. The port is bound to loopback, so nothing off
+      # this VM can reach the database.
+      POSTGRES_USER: argus
+      POSTGRES_PASSWORD: argus
+      POSTGRES_DB: argus
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - argus-pgdata:/var/lib/postgresql/data
+      # Mount the single file, not the migrations directory: the image ships
+      # its own TimescaleDB setup scripts in /docker-entrypoint-initdb.d, and a
+      # directory mount would hide them. The 100_ prefix runs ours after theirs.
+      - ./storage/migrations/001_events.sql:/docker-entrypoint-initdb.d/100_argus_events.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U argus -d argus"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  argus-pgdata:

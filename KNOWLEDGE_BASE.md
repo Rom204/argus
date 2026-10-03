@@ -159,6 +159,33 @@
 - **Periodic `sh` / `which` / `ps` / `cpuUsage.sh` every ~5s** come from the VS Code Remote-SSH server's `ptyHost` process polling resource usage. Real processes, correctly captured — expect them in any capture taken while connected over Remote-SSH.
 - **The first line can be an EXIT with no EXECVE** for a process started before the probes attached. Not a bug.
 
+## Persistence layer (Milestone 2)
+
+### Issue (avoided): mounting a migrations *directory* over `/docker-entrypoint-initdb.d` disables TimescaleDB setup
+
+- **Root Cause:** the `timescale/timescaledb` image ships its own init scripts in `/docker-entrypoint-initdb.d` (installing the extension, tuning config). A bind mount of a host directory onto that path *replaces* the directory's contents, so those scripts silently never run.
+- **Resolution:** `docker-compose.yml` mounts the single migration file as `/docker-entrypoint-initdb.d/100_argus_events.sql`. Init scripts run in filename order, so `100_` runs after the image's own. Confirmed in the container log on first start: the image's `CREATE EXTENSION` lines, then `running /docker-entrypoint-initdb.d/100_argus_events.sql`.
+- **Watch for:** init scripts run only when the data volume is **empty**. Editing the migration does nothing to an existing DB — `docker compose down -v` first (wipes data).
+
+### Not an error: `background worker "TimescaleDB Background Worker Scheduler..." trying to connect to template database, exiting`
+
+- Logged once during first-start initialization, while the entrypoint is still creating databases. The container goes healthy and the extension works. Ignore it.
+
+### Issue: example process-tree query failed with `syntax error at or near "UNION"`
+
+- **Root Cause:** `ORDER BY` / `LIMIT` inside one arm of a `UNION` — including the anchor of a `WITH RECURSIVE` CTE — is a syntax error in PostgreSQL unless that arm is parenthesised.
+- **Resolution:** wrapped the anchor `SELECT ... ORDER BY ... LIMIT 1` in parentheses. All example queries are now checked by piping the file through `psql -v ON_ERROR_STOP=1`.
+
+### Concept: storage integration tests run in a throwaway schema
+
+- `storage/postgres_test.go` creates `argus_test_<nanos>`, applies the real `001_events.sql` with `search_path` pointing at it, and drops it with `CASCADE` afterwards. Tests run in parallel without seeing each other's rows, the migration itself is exercised, and the dev DB's `public.events` is untouched. This is why the migration must never schema-qualify names.
+- `CREATE EXTENSION IF NOT EXISTS timescaledb SCHEMA public` runs first: if the extension were created while `search_path` pointed at the test schema, dropping that schema would drop the extension with it.
+
+### Concept: joining the `docker` group needs a fresh login — for VS Code, a reboot
+
+- Group membership is read at login. `usermod -aG docker rom` doesn't affect shells that already exist, and the VS Code Remote-SSH server process (which spawns Claude Code's shell) survives window reloads, so it keeps the old group list. Rebooting the VM was the reliable fix. Note that `docker` group membership is root-equivalent — acceptable on this throwaway dev VM.
+- The same reboot moved the kernel 6.8.0-138 → 6.8.0-139 (pending update). BTF and the toolchain were re-checked afterwards.
+
 ---
 
 ## Concepts learned (appendix)

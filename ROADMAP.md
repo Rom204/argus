@@ -21,9 +21,9 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ## Current status
 
-**Where we are right now:** Milestone 1 code-complete, pending manual QA. All nine probes (8 tracepoints + the `commit_creds` kprobe) compile and load, the Go agent decodes v2 events and prints them, kernel threads are filtered, and Ctrl+C shuts down cleanly. 15 unit tests green across `event/` and `sensor/`.
+**Where we are right now:** Milestone 1 complete (2026-09-17) — all nine probes load, events decode and print, kernel threads filtered, manual QA passed. One known gap deferred: fork-without-exec (see the note under M1.13). Milestone 2 plan approved: one `events` hypertable + a `processes` view, agent writes to the DB and still prints to stdout.
 
-**Next actionable sub-task:** M1.13 `stress-ng` check (Rom, needs `sudo`). Process-spawn QA passed 2026-09-17. Fork-without-exec gap deferred — see the note under M1.13.
+**Next actionable sub-task:** M2 manual QA (Rom, needs `sudo`) — run the agent against the compose DB and check rows + example queries. Everything else in M2 is done and tested against a live DB.
 
 ---
 
@@ -44,7 +44,7 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ---
 
-## Milestone 1 — eBPF sensor tracing process lifecycle 🚧
+## Milestone 1 — eBPF sensor tracing process lifecycle ✅
 
 **Goal:** running the Go agent on the VM prints a structured line for every process create / identity-change / exit on the host, with kernel threads filtered out.
 
@@ -65,7 +65,7 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 - [x] **M1.10** — Kernel-thread filtering (PPID == 2) — implemented in user space per §6.2 as `isKernelThread` in `sensor/filter.go`, matching kthreadd itself and its children; covered by `sensor/filter_test.go`
 - [x] **M1.11** — Graceful shutdown: signal handling (SIGINT/SIGTERM), detach BPF programs on exit — `signal.NotifyContext` in `main.go`; cancelling the context closes the ring buffer reader, which unblocks `Run`, and `Sensor.Close` detaches every link
 - [x] **M1.12** — Unit tests for the event decoder (fed known byte layouts, expects correct struct output) — `event/event_test.go`: full record, comm filling the field with no NUL, wrong size rejected, wrong version rejected, type rendering
-- [ ] **M1.13** — Manual QA: run agent, spawn processes (`sleep 1 &`, `su -c 'id'`, etc.), verify correct structured output; run kernel workload (`stress-ng`), verify no kernel threads leak through — *2026-09-17: process-spawn half passed (EXECVE/EXIT/CAPS correct for `true`, `id`, `ping` → `caps=0x2000`, `sudo` → `true` as uid 0; no kernel threads). `stress-ng` half pending.*
+- [x] **M1.13** — Manual QA: run agent, spawn processes (`sleep 1 &`, `su -c 'id'`, etc.), verify correct structured output; run kernel workload (`stress-ng`), verify no kernel threads leak through — *2026-09-17: EXECVE/EXIT/CAPS correct for `true`, `id`, `ping` → `caps=0x2000`, `sudo` → `true` as uid 0; `stress-ng --cpu 4` under capture produced 0 `kworker`/`ksoftirqd`/`kthreadd`/`migration` lines.*
 
 **Known gap, deferred by decision (2026-09-17):** `fork()` without `exec` produces no creation event — such processes appear only at EXIT. §4.3 lists fork as in scope; fix is an additive `sched_process_fork` probe + `FORK` event type. See `KNOWLEDGE_BASE.md`. Revisit when planning M2's `processes` table.
 
@@ -82,13 +82,13 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ### Sub-tasks
 
-- [ ] Write `docker-compose.yml` bringing up PostgreSQL + TimescaleDB with a persistent volume
-- [ ] Design initial schema per `CLAUDE.md` §11 (`processes` + `process_events`, TimescaleDB hypertable on the events side); write as a SQL migration file
-- [ ] Add DB driver dependency to `go.mod` (choose `jackc/pgx` — mature, well-suited for TimescaleDB)
-- [ ] Create a `storage/` package: connection setup, insert functions for each event type, batched writes to avoid blocking the ring buffer reader
-- [ ] Wire the storage package into `main.go` — replace stdout print with DB insert
-- [ ] Write 3–5 example queries proving the data is useful (recent execve events, process tree for a given PID, all setuid events in the last hour) — save as `docs/example-queries.sql`
-- [ ] Integration test: event in → row out (real DB in a test container)
+- [x] Write `docker-compose.yml` bringing up PostgreSQL + TimescaleDB with a persistent volume — `timescale/timescaledb:2.30.1-pg17`, loopback-only port, migration mounted as a single file (see `KNOWLEDGE_BASE.md`)
+- [x] Design schema per `CLAUDE.md` §11 — one `events` hypertable + `processes` view (decision changed from the normalized plan, see §11); `storage/migrations/001_events.sql`, applied on first `docker compose up`
+- [x] Add DB driver dependency to `go.mod` — `jackc/pgx/v5` v5.11.0
+- [x] Create a `storage/` package: connection setup, batched writes to avoid blocking the ring buffer reader — `row.go`, `writer.go` (500 rows / 100 ms), `postgres.go` (`COPY`); 6 unit tests race-clean + 2 integration tests
+- [x] Wire the storage package into `main.go` — DB write added **alongside** the stdout print (Rom's call, keeps the live demo); DSN from `ARGUS_DB_URL`, defaulting to the compose DB so `sudo ./argus` works
+- [x] Write 3–5 example queries — `docs/example-queries.sql`: recent execs, process tree under the latest `sudo`, privilege gains, top binaries, short-lived processes
+- [x] Integration test: event in → row out (real DB, local compose + CI service container) — field-for-field read-back, plus `processes` view pairing with PID reuse (mutation-checked: removing the time condition from the view makes it fail). CI run unconfirmed until Rom pushes
 - [ ] Manual QA: run agent, spawn processes, run example queries, verify correct rows
 
 **Done when:** the agent runs against a live DB, processes executed on the host produce correct rows, and the example queries return sensible results. Integration test passes.

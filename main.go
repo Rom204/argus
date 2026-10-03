@@ -1,7 +1,9 @@
 // Command argus is the Argus EDR agent: it loads the eBPF process-lifecycle
-// probes and streams what they observe.
+// probes, prints what they observe, and persists every event to the local
+// PostgreSQL + TimescaleDB store.
 //
-// Requires root — loading BPF programs is a privileged operation.
+// Requires root — loading BPF programs is a privileged operation — and a
+// running database (`docker compose up -d`).
 package main
 
 import (
@@ -15,6 +17,7 @@ import (
 
 	"github.com/Rom204/argus/event"
 	"github.com/Rom204/argus/sensor"
+	"github.com/Rom204/argus/storage"
 )
 
 // The compiled probes are embedded so the agent is a single self-contained
@@ -33,6 +36,11 @@ func main() {
 	}
 }
 
+// defaultDBURL matches docker-compose.yml. It is a default rather than a
+// required setting because `sudo` strips the environment, and a plain
+// `sudo ./argus` should just work.
+const defaultDBURL = "postgres://argus:argus@127.0.0.1:5432/argus?sslmode=disable"
+
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -42,15 +50,32 @@ func run() error {
 		return err
 	}
 
+	dbURL := os.Getenv("ARGUS_DB_URL")
+	if dbURL == "" {
+		dbURL = defaultDBURL
+	}
+	db, err := storage.Open(ctx, dbURL)
+	if err != nil {
+		return fmt.Errorf("%w (is \"docker compose up -d\" running?)", err)
+	}
+	defer db.Close()
+
+	writer := storage.NewWriter(db.Insert, clock)
+	writer.Start()
+	// Deferred after db.Close, so it runs first: the last batch is flushed
+	// while the pool is still open.
+	defer writer.Close()
+
 	s, err := sensor.New(bpfObject)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 
-	fmt.Fprintln(os.Stderr, "argus: probes attached, watching process lifecycle (Ctrl+C to stop)")
+	fmt.Fprintln(os.Stderr, "argus: probes attached, writing events to the database (Ctrl+C to stop)")
 
 	return s.Run(ctx, func(ev event.ProcessEvent) {
 		fmt.Printf("%s %s\n", clock.WallTime(ev.TimestampNS).Format("15:04:05.000"), ev)
+		writer.Add(ev)
 	})
 }
