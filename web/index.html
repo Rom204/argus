@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Argus — process events</title>
+<style>
+  :root {
+    --bg: #15181c;
+    --panel: #1d2127;
+    --line: #2b3138;
+    --text: #e6e9ec;
+    --dim: #8b959f;
+    --exec: #7fc29b;
+    --exit: #d98a7b;
+    --other: #c9a86a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 20px;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+  h1 span { color: var(--dim); font-weight: 400; }
+  .controls { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  select, button {
+    font: inherit;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 9px;
+    cursor: pointer;
+  }
+  button:hover, select:hover { border-color: var(--dim); }
+  #status { color: var(--dim); font-size: 12px; white-space: nowrap; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 5px 10px; white-space: nowrap; }
+  th {
+    color: var(--dim);
+    font-weight: 400;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    border-bottom: 1px solid var(--line);
+  }
+  tbody tr:nth-child(even) { background: rgba(255,255,255,.025); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .type-EXECVE { color: var(--exec); }
+  .type-EXIT   { color: var(--exit); }
+  .type-SETUID, .type-CAPS { color: var(--other); }
+  .wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>argus <span>— process events</span></h1>
+  <div class="controls">
+    <select id="type">
+      <option value="">all types</option>
+      <option value="EXECVE">EXECVE only</option>
+      <option value="EXIT">EXIT only</option>
+      <option value="SETUID">SETUID only</option>
+      <option value="CAPS">CAPS only</option>
+    </select>
+    <button id="pause">Pause</button>
+    <span id="status">loading…</span>
+  </div>
+</header>
+
+<div class="wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>time</th><th>type</th><th>pid</th><th>ppid</th>
+        <th>uid</th><th>comm</th><th>caps</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<script>
+"use strict";
+
+const REFRESH_MS = 2000;
+const LIMIT = 100;
+
+const rowsEl   = document.getElementById("rows");
+const typeEl   = document.getElementById("type");
+const pauseEl  = document.getElementById("pause");
+const statusEl = document.getElementById("status");
+
+let paused = false;
+let timer  = null;
+
+// Escape anything that came from the machine before putting it in the page.
+// comm is a process name chosen by whoever started the process, so it is not
+// trustworthy input.
+function escapeHTML(value) {
+  return String(value).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[c]);
+}
+
+// "2026-10-04T15:02:11.482Z" -> "15:02:11.482"
+function clockTime(iso) {
+  const t = iso.indexOf("T");
+  return t === -1 ? iso : iso.slice(t + 1).replace("Z", "");
+}
+
+function renderRows(events) {
+  rowsEl.innerHTML = events.map(e => `
+    <tr>
+      <td>${escapeHTML(clockTime(e.time))}</td>
+      <td class="type-${escapeHTML(e.type)}">${escapeHTML(e.type)}</td>
+      <td class="num">${escapeHTML(e.pid)}</td>
+      <td class="num">${escapeHTML(e.ppid)}</td>
+      <td class="num">${escapeHTML(e.uid)}</td>
+      <td>${escapeHTML(e.comm)}</td>
+      <td>${escapeHTML(e.caps)}</td>
+    </tr>`).join("");
+}
+
+async function refresh() {
+  // Relative URL: the page and the API are served by the same process on the
+  // same origin, so there is no host to configure and no CORS involved.
+  const params = new URLSearchParams({ limit: LIMIT });
+  if (typeEl.value) params.set("type", typeEl.value);
+
+  try {
+    const response = await fetch(`/api/events?${params}`);
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      statusEl.textContent = `error ${response.status}: ${body.error || "request failed"}`;
+      return;
+    }
+    const data = await response.json();
+    renderRows(data.events);
+    statusEl.textContent = `${data.count} events · updated ${new Date().toLocaleTimeString()}`;
+  } catch (err) {
+    // Almost always "the API process is not running".
+    statusEl.textContent = `cannot reach the API: ${err.message}`;
+  }
+}
+
+function start() {
+  stop();
+  timer = setInterval(refresh, REFRESH_MS);
+}
+function stop() {
+  if (timer !== null) { clearInterval(timer); timer = null; }
+}
+
+pauseEl.addEventListener("click", () => {
+  paused = !paused;
+  pauseEl.textContent = paused ? "Resume" : "Pause";
+  if (paused) { stop(); } else { refresh(); start(); }
+});
+
+// Changing the filter should feel immediate, not wait for the next tick.
+typeEl.addEventListener("change", refresh);
+
+refresh();
+start();
+</script>
+</body>
+</html>

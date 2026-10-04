@@ -36,3 +36,6 @@ bpf/*.o
 
 # Compiled Manager binary (go build ./... at repo root)
 /argus
+
+# Compiled API server binary
+/argus-api
