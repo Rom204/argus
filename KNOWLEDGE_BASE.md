@@ -2,7 +2,7 @@
 
 > Engineering ledger of infrastructure and code issues encountered while building Argus. Format: **Issue → Root Cause → Resolution**, plus watch-for notes on things that work today but carry a real risk of breaking later. Concepts learned along the way are in the appendix at the end.
 >
-> For the project spec, milestones, and working process see `CLAUDE.md`. For per-milestone delivery notes see `WALKTHROUGH.md`.
+> For the project spec, milestones, and working process see `CLAUDE.md`. Milestone status lives in `ROADMAP.md`.
 
 ---
 
@@ -185,6 +185,40 @@
 
 - Group membership is read at login. `usermod -aG docker rom` doesn't affect shells that already exist, and the VS Code Remote-SSH server process (which spawns Claude Code's shell) survives window reloads, so it keeps the old group list. Rebooting the VM was the reliable fix. Note that `docker` group membership is root-equivalent — acceptable on this throwaway dev VM.
 - The same reboot moved the kernel 6.8.0-138 → 6.8.0-139 (pending update). BTF and the toolchain were re-checked afterwards.
+
+---
+
+## Demo API + UI (Milestone D)
+
+### Issue: the `events` table was empty for two weeks while every test passed and CI stayed green
+
+- **Root Cause:** M2's manual QA sub-task — "run the agent against the compose DB and check rows" — was never actually run, but the surrounding work was marked done. The storage layer's integration tests passed because they insert their own rows into a throwaway schema; they never exercise the *agent*. So every automated signal was green while the one path that matters, sensor → `Writer` → `COPY`, had never executed once.
+- **Resolution:** ran it. 186 rows on the first try; the code was fine all along. `SELECT count(*)` plus `SELECT hypertable_name, num_chunks FROM timescaledb_information.hypertables` is the check — TimescaleDB creates a chunk on first insert, so `num_chunks = 0` proves *nothing was ever written*, as opposed to rows having been deleted.
+- **Why it'll bite later:** this is the second time a ticked checkbox has been false (the first was the M0 toolchain after the VM rebuild). **A green test suite is not evidence that the program works end to end.** Tests cover the layers; only running the thing covers the seams between them.
+
+### Issue: `go build ./...` appeared to succeed while the binary on disk stayed 16 days old
+
+- **Root Cause:** when its package pattern matches more than one package, `go build` compiles everything and **discards** the resulting executables, writing only to the build cache. `./...` matches every package, so the `argus` binary is never written. It exits 0, so nothing looks wrong — but the stale binary still contains the *previously embedded* BPF object, which means edits to `bpf/sensor.bpf.c` silently do not take effect.
+- **Resolution:** `go build -o argus .` to build the agent, `go build -o argus-api ./cmd/argus-api` for the server. Use `./...` for `vet` and `test`, never to produce a binary.
+- **Why it'll bite later:** doubly dangerous here because of `//go:embed` — a stale Go binary carries a stale copy of the compiled kernel program, so you can be debugging C you already fixed.
+
+### Issue: the page loaded from inside the VM but the Mac browser hung with no error
+
+- **Root Cause:** `ufw` is active and enabled on the VM. Port 22 is allowed, which is why Remote-SSH works and makes the firewall easy to forget, but 8080 was simply dropped. A dropped packet produces a hang, not a refusal, so there is no error message to read.
+- **Resolution:** `sudo ufw allow 8080/tcp`. Diagnose it by layer: `ss -tlnp | grep 8080` proves the server is listening, and `curl` from inside the VM against both `127.0.0.1:8080` and the VM's own IP proves the application is fine — which localises the fault to the firewall before touching any code.
+- **Second route worth knowing:** VS Code Remote-SSH automatically forwards listening ports, so `http://localhost:8080` on the Mac works through port 22 with no firewall change — **but only while VS Code is open.** Good as a fallback, not as the demo path.
+
+### Issue: `//go:embed` cannot embed a file from a parent directory
+
+- **Root Cause:** the directive only accepts paths at or below the directory holding the `.go` file. `cmd/argus-api/main.go` therefore cannot embed `../../web/index.html`.
+- **Resolution:** put the embed beside the file it embeds — `web/web.go` embeds `index.html` and exports an `http.Handler`. The agent already works this way by accident, since `main.go` sits at the repo root next to `bpf/`.
+- **Why it'll bite later:** this is the reason moving `main.go` into `cmd/argus-agent/` is not a free refactor — it would break `//go:embed bpf/sensor.bpf.o` and need a `bpf/embed.go` to fix.
+
+### Issue: Postgres rejected a query using `WHERE ($1 = '' OR type = $1)`
+
+- **Root Cause:** both sides of `$1 = ''` are untyped — a bare parameter and an untyped string literal — so the server cannot infer the parameter's type and refuses to prepare the statement.
+- **Resolution:** cast explicitly: `WHERE ($1::text = '' OR type = $1::text)`. This also documents the intent at the call site.
+- **Note:** the pattern itself is worth keeping — one statement serving both "all types" and "one type" means one code path and one thing to test, instead of building SQL conditionally in Go.
 
 ---
 

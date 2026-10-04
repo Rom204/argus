@@ -21,9 +21,24 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ## Current status
 
-**Where we are right now:** Milestone 1 complete (2026-09-17) — all nine probes load, events decode and print, kernel threads filtered, manual QA passed. One known gap deferred: fork-without-exec (see the note under M1.13). Milestone 2 plan approved: one `events` hypertable + a `processes` view, agent writes to the DB and still prints to stdout.
+> **Scope change, 2026-10-03.** The project was re-scoped for an interview demo on 2026-10-07.
+> Milestones 3, 4 and 5 below are **cancelled, not pending** — see "Deliberately out of scope".
+> The deliverable is now M0–M2 plus Milestone D: collect process events, store them, show them in
+> a web table.
 
-**Next actionable sub-task:** M2 manual QA (Rom, needs `sudo`) — run the agent against the compose DB and check rows + example queries. Everything else in M2 is done and tested against a live DB.
+**Where we are right now (2026-10-04):** the pipeline runs end to end, verified by hand for the
+first time. `sudo ./argus` writes events to Postgres; `./argus-api` serves them as JSON and serves
+the page; the page renders them in a browser on the Mac and refreshes every 2 seconds. 32 tests
+pass, `go vet` is clean, `gofmt` is clean.
+
+M1 complete (2026-09-17). **M2 complete and finally QA'd (2026-10-04)** — the manual QA below had
+never been run, and when it was, the `events` table turned out to have been empty the whole time
+(see `KNOWLEDGE_BASE.md`). It now holds real rows. Milestone D complete apart from the firewall step.
+
+**Next actionable sub-task:** Milestone D.8 — `sudo ufw allow 8080/tcp`, so the demo URL
+`http://192.168.64.5:8080` works without VS Code running. Then Tuesday's rehearsal.
+
+**Known gap, unchanged:** fork-without-exec produces no creation event (note under M1.13).
 
 ---
 
@@ -73,7 +88,7 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ---
 
-## Milestone 2 — Persistence layer
+## Milestone 2 — Persistence layer ✅
 
 **Goal:** events land in a queryable database instead of stdout, and can be queried back with correct data.
 
@@ -95,7 +110,49 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ---
 
-## Milestone 3 — Extended event types + benchmarks ⭐ v1 complete
+## Milestone D — Demo API + UI ✅
+
+**Goal:** the stored events are readable over a REST API and visible in a browser table, as three
+separate processes: collector (root), API (unprivileged), browser.
+
+### Sub-tasks
+
+- [x] **D.1** Verify the agent actually writes to the database — never done before 2026-10-04. 186 rows on the first run; `timeout` sends SIGTERM, so this also proved the final batch flushes on shutdown
+- [x] **D.2** Readability rename across C, Go and SQL — `AS s`/`AS x` → `start_ev`/`exit_ev`, `e` → `event`, `b` → `raw`, `ve` → `verifierErr`, `l` → `probeLink`, `coll` → `collection`, `ev` → `evt`. Method receivers left short, which is Go convention. Pure renaming; compiler + 22 existing tests were the safety net. Also fixed a pre-existing `gofmt` failure in `main.go` (unsorted imports)
+- [x] **D.3** `storage/query.go` — `RecentEvents` with parameterised SQL (`$1`, `$2`) and explicit `::text` casts, because Postgres cannot infer a bare parameter's type from `$1 = ''`. Returns a non-nil empty slice so the JSON is `[]`, not `null`
+- [x] **D.4** `api/query.go` — `parseEventQuery`, a pure function over `url.Values`. `limit` 1–1000, `type` matched against an allow-list of the four contract values. 15 table-driven cases, no HTTP and no database
+- [x] **D.5** `api/api.go` — `EventStore` interface declared by the consumer, so the 7 handler tests run against a hand-written fake with no Docker. Separate `eventJSON` wire type so Go field names and JSON keys can move independently. Capabilities serialised as hex
+- [x] **D.6** `web/index.html` + `web/web.go` — 179 lines, no CDN, no framework, no build step. Table, type filter, Pause, 2-second refresh. Embedded in the binary; the embed lives in `web/` because `//go:embed` cannot reach a parent directory
+- [x] **D.7** `cmd/argus-api/main.go` — binds `0.0.0.0:8080`, graceful shutdown via `signal.NotifyContext` + `Shutdown`, `ReadHeaderTimeout` set. Needs no root
+- [ ] **D.8** `sudo ufw allow 8080/tcp` — *Rom, needs sudo.* Without it the Mac browser hangs with no error on `192.168.64.5:8080`. VS Code Remote-SSH's automatic port forwarding makes `localhost:8080` work as a second route, but only while VS Code is open
+- [ ] **D.9** Rehearsal (Tuesday): twice, from a cold VM boot, Mac Wi-Fi off, inside 5 minutes; write `docs/DEMO.md`
+
+**Done when:** `docker compose up -d`, `sudo ./argus`, `./argus-api`, then
+`http://192.168.64.5:8080` on the Mac shows a populating table, and a command typed in an SSH
+session appears within ~2 seconds.
+
+**Verified 2026-10-04:** `GET /` → 200 text/html; `GET /api/events` → 200 JSON with real rows;
+`?type=exit` filters; `?limit=0` → 400 with a JSON error; unknown path → 404; `POST` → 405;
+Ctrl+C exits clean.
+
+---
+
+## Deliberately out of scope
+
+Cancelled by the 2026-10-03 re-scope. Kept below as a record of what was planned, not a to-do list.
+
+| Cancelled | Why |
+|---|---|
+| M3 network events (`tcp_connect`) | New probe, new event type, contract version bump. No demo value. |
+| M3 systemd unit | Running the agent by hand in a terminal is a better demo. |
+| M3 benchmarks | Budget stays a stated target in the README; not measured. |
+| M4 detection rule engine / MITRE | A whole new layer. Not what the role asks for. |
+| M5 React web UI | Replaced by Milestone D's single static page — no framework, no build step, and every line explainable. |
+| Replay mode | Unnecessary: the API reads the database, not the agent, so the demo survives the sensor failing. The persistent volume is the fallback. |
+
+---
+
+## ~~Milestone 3 — Extended event types + benchmarks~~ ❌ CANCELLED 2026-10-03
 
 **Goal:** prove breadth (network events flow through the same pipeline) and credibility (measured overhead numbers in the README).
 
@@ -122,7 +179,7 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ---
 
-## Milestone 4 — Detection rule engine *(optional, only if time permits after M3)*
+## ~~Milestone 4 — Detection rule engine~~ ❌ CANCELLED 2026-10-03
 
 **Goal:** turn telemetry into MITRE-tagged alerts.
 
@@ -148,7 +205,7 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ---
 
-## Milestone 5 — Web UI *(optional, only if time permits after M4)*
+## ~~Milestone 5 — Web UI~~ ❌ CANCELLED 2026-10-03 — superseded by Milestone D
 
 **Goal:** a visual demo asset for the README GIF.
 
@@ -169,7 +226,7 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ---
 
-## Priority order if time compresses
+## ~~Priority order if time compresses~~ — superseded by the re-scope
 
 Sensor working (M1) > persistence working (M2) > events queryable (part of M2) > benchmarks (M3) > everything else.
 

@@ -24,7 +24,9 @@ Never begin implementing from my request alone.
 
 ### 0.2 You cannot run privileged commands
 
-`sudo` on this VM requires an interactive password and caches per-TTY. Your shell cannot use it. This affects apt installs, loading BPF programs, Docker, and systemd.
+`sudo` on this VM requires an interactive password and caches per-TTY. Your shell cannot use it. This affects apt installs, loading BPF programs, `ufw`, and systemd.
+
+**Correction (2026-10-04): Docker is NOT affected.** `rom` is a member of the `docker` group, so you can run `docker compose` and the storage integration tests directly, without asking. Only loading BPF programs (`sudo ./argus`) and firewall changes genuinely need root.
 
 When a step needs root: **stop, and emit a fenced copy-paste block** for me to run in my own terminal, followed by what output you need back from me. Do not attempt the command "to see if it works." Do not route around it.
 
@@ -133,6 +135,7 @@ v1 is reached at the end of Milestone 3 in `ROADMAP.md`. M4 and M5 are optional.
 - **VM resources:** 4 vCPU, 4GB RAM, 30GB virtual disk; root filesystem 27GB (the Ubuntu Server installer originally left half the volume group unallocated — extended with `lvextend -l +100%FREE` + `resize2fs` on 2026-09-02)
 - **Toolchain** (verified on this VM 2026-09-02): `clang 18.1.3`, `LLVM 18.1.3`, `libbpf-dev 1.3.0` — all installed **from apt**, which is exactly what `ci.yml` does, so dev and CI stay on identical versions. Go 1.27.1 from the official tarball in `/usr/local/go`, on PATH via `/etc/profile.d/go.sh` (apt's Go is 1.22, too old for this module).
 - **Connection:** VS Code Remote-SSH → code lives on the VM, edited from the Mac. All git/build/test commands run **in the VM shell**, never on the Mac.
+- **Firewall:** `ufw` is **active and enabled**. Port 22 is allowed, which is why Remote-SSH works and makes the firewall easy to forget; any other port is silently dropped, so a browser on the Mac hangs with no error. The API port needs `sudo ufw allow 8080/tcp`. VS Code Remote-SSH also auto-forwards listening ports, which makes `http://localhost:8080` work from the Mac through port 22 — but only while VS Code is open, so it is a fallback, not the demo path.
 - **Root access:** see §0.2. Privileged steps must be handed to Rom, never attempted.
 
 Verify environment facts with `uname -a` / `hostname -I` when it matters — the written values here are the fastest-rotting part of this doc. **After any VM rebuild or migration, re-run the M0 checks rather than trusting the checkboxes** — installed libraries (`libclang1-18`) do not imply installed tools (`clang`); use `command -v clang` and `go version`.
@@ -231,8 +234,16 @@ for f in bpf/*.bpf.c; do
 done
 
 go vet ./...
-go build ./...
 go test ./...          # single test: go test ./... -run TestName
+
+# Build the binaries. NOTE: `go build ./...` DISCARDS executables when the
+# pattern matches several packages, so it will leave a stale binary on disk
+# (which still carries the previously embedded BPF object). Always use -o:
+go build -o argus .                      # the agent  — needs sudo to run
+go build -o argus-api ./cmd/argus-api    # the API    — needs no root
+
+sudo ./argus       # collector: loads the probes, writes to the DB
+./argus-api        # server: REST API on 0.0.0.0:8080 + the page at /
 
 # Event store (M2+) — required to run the agent and the storage integration tests
 docker compose up -d
