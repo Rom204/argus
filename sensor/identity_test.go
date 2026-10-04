@@ -6,13 +6,13 @@ import (
 	"github.com/Rom204/argus/event"
 )
 
-func ev(typ event.Type, pid, uid, gid uint32) event.ProcessEvent {
+func evt(typ event.Type, pid, uid, gid uint32) event.ProcessEvent {
 	return event.ProcessEvent{Type: typ, PID: pid, UID: uid, GID: gid, Comm: "test"}
 }
 
 // capsEv is ev with a capability mask and a parent, for the commit_creds path.
 func capsEv(typ event.Type, pid, ppid, uid, gid uint32, caps uint64) event.ProcessEvent {
-	e := ev(typ, pid, uid, gid)
+	e := evt(typ, pid, uid, gid)
 	e.PPID = ppid
 	e.CapEffective = caps
 	return e
@@ -41,7 +41,7 @@ func TestObserveSuppressesRepeatedIdentities(t *testing.T) {
 	tr := newIdentityTracker()
 
 	// Process starts as uid 1000.
-	if !tr.observe(ev(event.TypeExecve, 100, 1000, 1000)) {
+	if !tr.observe(evt(event.TypeExecve, 100, 1000, 1000)) {
 		t.Fatal("EXECVE should always be emitted")
 	}
 
@@ -50,13 +50,13 @@ func TestObserveSuppressesRepeatedIdentities(t *testing.T) {
 		e    event.ProcessEvent
 		want bool
 	}{
-		{"escalate to root", ev(event.TypeSetuid, 100, 0, 1000), true},
-		{"re-assert root", ev(event.TypeSetuid, 100, 0, 1000), false},
-		{"re-assert root again", ev(event.TypeSetuid, 100, 0, 1000), false},
-		{"drop back", ev(event.TypeSetuid, 100, 1000, 1000), true},
-		{"re-assert", ev(event.TypeSetuid, 100, 1000, 1000), false},
-		{"gid change only", ev(event.TypeSetuid, 100, 1000, 0), true},
-		{"full root", ev(event.TypeSetuid, 100, 0, 0), true},
+		{"escalate to root", evt(event.TypeSetuid, 100, 0, 1000), true},
+		{"re-assert root", evt(event.TypeSetuid, 100, 0, 1000), false},
+		{"re-assert root again", evt(event.TypeSetuid, 100, 0, 1000), false},
+		{"drop back", evt(event.TypeSetuid, 100, 1000, 1000), true},
+		{"re-assert", evt(event.TypeSetuid, 100, 1000, 1000), false},
+		{"gid change only", evt(event.TypeSetuid, 100, 1000, 0), true},
+		{"full root", evt(event.TypeSetuid, 100, 0, 0), true},
 	}
 	for _, tc := range tests {
 		if got := tr.observe(tc.e); got != tc.want {
@@ -103,10 +103,10 @@ func TestObserveDedupsAcrossEventTypes(t *testing.T) {
 func TestObserveEmitsFirstEventForUnknownProcess(t *testing.T) {
 	tr := newIdentityTracker()
 
-	if !tr.observe(ev(event.TypeSetuid, 200, 0, 0)) {
+	if !tr.observe(evt(event.TypeSetuid, 200, 0, 0)) {
 		t.Error("first SETUID for an unseen process should be emitted")
 	}
-	if tr.observe(ev(event.TypeSetuid, 200, 0, 0)) {
+	if tr.observe(evt(event.TypeSetuid, 200, 0, 0)) {
 		t.Error("second identical SETUID should be suppressed")
 	}
 }
@@ -116,12 +116,12 @@ func TestObserveEmitsFirstEventForUnknownProcess(t *testing.T) {
 func TestObserveForgetsExitedProcesses(t *testing.T) {
 	tr := newIdentityTracker()
 
-	tr.observe(ev(event.TypeExecve, 300, 0, 0))
+	tr.observe(evt(event.TypeExecve, 300, 0, 0))
 	if tr.tracked() != 1 {
 		t.Fatalf("tracked() = %d, want 1", tr.tracked())
 	}
 
-	if !tr.observe(ev(event.TypeExit, 300, 0, 0)) {
+	if !tr.observe(evt(event.TypeExit, 300, 0, 0)) {
 		t.Error("EXIT should always be emitted")
 	}
 	if tr.tracked() != 0 {
@@ -130,7 +130,7 @@ func TestObserveForgetsExitedProcesses(t *testing.T) {
 
 	// PID 300 is reused by a new process with the same credentials; because
 	// the old state was dropped, this reports rather than being suppressed.
-	if !tr.observe(ev(event.TypeSetuid, 300, 0, 0)) {
+	if !tr.observe(evt(event.TypeSetuid, 300, 0, 0)) {
 		t.Error("recycled PID should not inherit the previous process's identity")
 	}
 }
@@ -139,16 +139,16 @@ func TestObserveForgetsExitedProcesses(t *testing.T) {
 func TestObserveIsPerProcess(t *testing.T) {
 	tr := newIdentityTracker()
 
-	tr.observe(ev(event.TypeExecve, 400, 1000, 1000))
-	tr.observe(ev(event.TypeExecve, 401, 1000, 1000))
+	tr.observe(evt(event.TypeExecve, 400, 1000, 1000))
+	tr.observe(evt(event.TypeExecve, 401, 1000, 1000))
 
-	if !tr.observe(ev(event.TypeSetuid, 400, 0, 0)) {
+	if !tr.observe(evt(event.TypeSetuid, 400, 0, 0)) {
 		t.Error("pid 400 changed identity, should be emitted")
 	}
-	if !tr.observe(ev(event.TypeSetuid, 401, 0, 0)) {
+	if !tr.observe(evt(event.TypeSetuid, 401, 0, 0)) {
 		t.Error("pid 401 changed identity independently, should be emitted")
 	}
-	if tr.observe(ev(event.TypeSetuid, 400, 0, 0)) {
+	if tr.observe(evt(event.TypeSetuid, 400, 0, 0)) {
 		t.Error("pid 400 re-asserting should be suppressed")
 	}
 }

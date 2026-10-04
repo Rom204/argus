@@ -35,16 +35,16 @@ func newIdentityTracker() *identityTracker {
 // EXECVE seeds a process's known identity, EXIT forgets it — which both bounds
 // the map to live processes and prevents a recycled PID from inheriting the
 // previous occupant's credentials.
-func (t *identityTracker) observe(ev event.ProcessEvent) bool {
-	current := identity{uid: ev.UID, gid: ev.GID, caps: ev.CapEffective}
+func (t *identityTracker) observe(evt event.ProcessEvent) bool {
+	current := identity{uid: evt.UID, gid: evt.GID, caps: evt.CapEffective}
 
-	switch ev.Type {
+	switch evt.Type {
 	case event.TypeExecve:
-		t.seen[ev.PID] = current
+		t.seen[evt.PID] = current
 		return true
 
 	case event.TypeExit:
-		delete(t.seen, ev.PID)
+		delete(t.seen, evt.PID)
 		return true
 
 	case event.TypeSetuid, event.TypeCaps:
@@ -55,9 +55,9 @@ func (t *identityTracker) observe(ev event.ProcessEvent) bool {
 		//
 		// A process first seen mid-flight has no baseline, so its first
 		// identity event is reported: we cannot claim nothing changed.
-		previous, known := t.seen[ev.PID]
+		previous, known := t.seen[evt.PID]
 		if !known {
-			t.seen[ev.PID] = current
+			t.seen[evt.PID] = current
 			return true
 		}
 
@@ -74,7 +74,7 @@ func (t *identityTracker) observe(ev event.ProcessEvent) bool {
 			return false
 		}
 
-		t.seen[ev.PID] = current
+		t.seen[evt.PID] = current
 		return true
 
 	default:

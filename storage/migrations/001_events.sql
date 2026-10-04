@@ -45,22 +45,25 @@ CREATE INDEX events_pid_time_idx ON events (pid, time DESC);
 -- the agent, has no EXECVE and so no row here (see the fork gap in
 -- KNOWLEDGE_BASE.md). exited_at is NULL while the process is still running.
 CREATE VIEW processes AS
-SELECT s.pid,
-       s.ppid,
-       s.comm,
-       s.uid,
-       s.gid,
-       s.cap_effective,
-       s.time AS started_at,
-       x.time AS exited_at
-FROM events AS s
+SELECT start_ev.pid,
+       start_ev.ppid,
+       start_ev.comm,
+       start_ev.uid,
+       start_ev.gid,
+       start_ev.cap_effective,
+       start_ev.time AS started_at,
+       exit_ev.time  AS exited_at
+FROM events AS start_ev
 LEFT JOIN LATERAL (
-    SELECT e.time
-    FROM events AS e
-    WHERE e.pid = s.pid
-      AND e.type = 'EXIT'
-      AND e.time >= s.time
-    ORDER BY e.time
+    -- The earliest EXIT for this pid at or after the EXECVE. Scanning forward
+    -- from each individual start is what keeps a reused pid from pairing with
+    -- the wrong process.
+    SELECT candidate.time
+    FROM events AS candidate
+    WHERE candidate.pid  = start_ev.pid
+      AND candidate.type = 'EXIT'
+      AND candidate.time >= start_ev.time
+    ORDER BY candidate.time
     LIMIT 1
-) AS x ON true
-WHERE s.type = 'EXECVE';
+) AS exit_ev ON true
+WHERE start_ev.type = 'EXECVE';

@@ -15,6 +15,6 @@ const kthreaddPID = 2
 // Identification is by parentage: kthreadd is PID 2, and the kernel creates its
 // threads as kthreadd's children, so a PPID of 2 marks one. kthreadd itself is
 // matched by PID for the same reason.
-func isKernelThread(ev event.ProcessEvent) bool {
-	return ev.PID == kthreaddPID || ev.PPID == kthreaddPID
+func isKernelThread(evt event.ProcessEvent) bool {
+	return evt.PID == kthreaddPID || evt.PPID == kthreaddPID
 }

@@ -104,36 +104,40 @@ func (e ErrBadVersion) Error() string {
 // Fields are read at explicit offsets in native byte order — the kernel wrote
 // them with the CPU's own endianness, and the offsets are stated here so this
 // file can be diffed directly against bpf/event.h.
-func Unmarshal(b []byte) (ProcessEvent, error) {
-	if len(b) != Size {
-		return ProcessEvent{}, ErrBadSize{Got: len(b)}
+func Unmarshal(raw []byte) (ProcessEvent, error) {
+	// Size is checked before anything is read: the version field cannot be
+	// trusted, or even safely addressed, in a buffer of the wrong length.
+	if len(raw) != Size {
+		return ProcessEvent{}, ErrBadSize{Got: len(raw)}
 	}
 
-	e := ProcessEvent{
-		TimestampNS:  binary.NativeEndian.Uint64(b[offTimestamp:]),
-		Version:      binary.NativeEndian.Uint32(b[offVersion:]),
-		Type:         Type(binary.NativeEndian.Uint32(b[offType:])),
-		PID:          binary.NativeEndian.Uint32(b[offPID:]),
-		PPID:         binary.NativeEndian.Uint32(b[offPPID:]),
-		UID:          binary.NativeEndian.Uint32(b[offUID:]),
-		GID:          binary.NativeEndian.Uint32(b[offGID:]),
-		Comm:         commString(b[offComm : offComm+CommLen]),
-		CapEffective: binary.NativeEndian.Uint64(b[offCaps:]),
+	decoded := ProcessEvent{
+		TimestampNS:  binary.NativeEndian.Uint64(raw[offTimestamp:]),
+		Version:      binary.NativeEndian.Uint32(raw[offVersion:]),
+		Type:         Type(binary.NativeEndian.Uint32(raw[offType:])),
+		PID:          binary.NativeEndian.Uint32(raw[offPID:]),
+		PPID:         binary.NativeEndian.Uint32(raw[offPPID:]),
+		UID:          binary.NativeEndian.Uint32(raw[offUID:]),
+		GID:          binary.NativeEndian.Uint32(raw[offGID:]),
+		Comm:         commString(raw[offComm : offComm+CommLen]),
+		CapEffective: binary.NativeEndian.Uint64(raw[offCaps:]),
 	}
 
-	if e.Version != Version {
-		return ProcessEvent{}, ErrBadVersion{Got: e.Version}
+	if decoded.Version != Version {
+		return ProcessEvent{}, ErrBadVersion{Got: decoded.Version}
 	}
 
-	return e, nil
+	return decoded, nil
 }
 
 // commString trims the NUL padding the kernel leaves after a short task name.
-func commString(b []byte) string {
-	if i := bytes.IndexByte(b, 0); i >= 0 {
-		b = b[:i]
+func commString(commField []byte) string {
+	// A name that fills all 16 bytes has no terminator at all, so look for the
+	// NUL rather than assuming one is there.
+	if nul := bytes.IndexByte(commField, 0); nul >= 0 {
+		commField = commField[:nul]
 	}
-	return string(b)
+	return string(commField)
 }
 
 // String renders one event as a single line. The capability mask is printed in

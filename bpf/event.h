@@ -15,13 +15,14 @@
  *   - NO __attribute__((packed)): natural alignment is what we want; the
  *     static asserts at the bottom are what enforces the layout
  */
-#ifndef __ARGUS_EVENT_H
+
+#ifndef __ARGUS_EVENT_H // best practice for not including a header twice
 #define __ARGUS_EVENT_H
 
 /* vmlinux.h defines __u32/__u64 itself; including both is a redefinition
  * error. Guarding keeps this header self-contained either way. */
 #ifndef __VMLINUX_H__
-#include <linux/types.h>
+#include <linux/types.h> // #include is simply a preprocessor mechanism which replaces this line with the contents of linux/types.h. so i could use the defenitions and constants in it. 
 #endif
 
 #define ARGUS_EVENT_VERSION 2u
@@ -39,7 +40,7 @@ enum argus_event_type {
 	 * at exec, neither of which any set*id syscall reports. */
 	ARGUS_EVENT_CAPS   = 4,
 };
-
+// this is the contract the C code will fill "line by line" and the Go code will read it "line by line"
 struct process_event {
 	/* CLOCK_MONOTONIC ns since boot (bpf_ktime_get_ns), NOT wall clock.
 	 * User space converts to wall clock by adding the boot epoch. */
@@ -66,7 +67,7 @@ struct process_event {
 	 * visible at exec and exit, not only when it changes. */
 	__u64 cap_effective;  /* offset 48 */
 };
-
+// here i am making sure that the struct is exactly 56 bytes long, and that the offsets of comm and cap_effective are correct. if they are not, it will throw a compile-time error with the message provided. because this means something has changed in the contract(struct).
 _Static_assert(sizeof(struct process_event) == 56,
 	       "process_event layout changed - update the Go decoder and DB schema");
 _Static_assert(__builtin_offsetof(struct process_event, comm) == 32,

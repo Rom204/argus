@@ -7,8 +7,8 @@
 package main
 
 import (
-	_ "embed"
 	"context"
+	_ "embed"
 	"fmt"
 	"log"
 	"os"
@@ -74,8 +74,8 @@ func run() error {
 
 	fmt.Fprintln(os.Stderr, "argus: probes attached, writing events to the database (Ctrl+C to stop)")
 
-	return s.Run(ctx, func(ev event.ProcessEvent) {
-		fmt.Printf("%s %s\n", clock.WallTime(ev.TimestampNS).Format("15:04:05.000"), ev)
-		writer.Add(ev)
+	return s.Run(ctx, func(evt event.ProcessEvent) {
+		fmt.Printf("%s %s\n", clock.WallTime(evt.TimestampNS).Format("15:04:05.000"), evt)
+		writer.Add(evt)
 	})
 }

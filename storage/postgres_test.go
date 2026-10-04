@@ -76,16 +76,16 @@ func TestProcessesView_PairsEachExecWithItsOwnExit(t *testing.T) {
 
 	t0 := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 	at := func(sec int) time.Time { return t0.Add(time.Duration(sec) * time.Second) }
-	ev := func(typ event.Type, pid uint32, comm string) event.ProcessEvent {
+	evt := func(typ event.Type, pid uint32, comm string) event.ProcessEvent {
 		return event.ProcessEvent{Version: event.Version, Type: typ, PID: pid, PPID: 1, Comm: comm}
 	}
 
 	err := db.Insert(ctx, [][]any{
-		toRow(ev(event.TypeExecve, 100, "sleep"), at(0)),
-		toRow(ev(event.TypeExit, 100, "sleep"), at(1)),
+		toRow(evt(event.TypeExecve, 100, "sleep"), at(0)),
+		toRow(evt(event.TypeExit, 100, "sleep"), at(1)),
 		// pid 100 recycled for a different process that is still running.
-		toRow(ev(event.TypeExecve, 100, "cat"), at(5)),
-		toRow(ev(event.TypeExecve, 200, "bash"), at(2)),
+		toRow(evt(event.TypeExecve, 100, "cat"), at(5)),
+		toRow(evt(event.TypeExecve, 200, "bash"), at(2)),
 	})
 	if err != nil {
 		t.Fatalf("Insert: %v", err)

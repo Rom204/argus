@@ -23,16 +23,16 @@ var columns = []string{
 // int32, so they widen to int64. cap_effective is uint64 and is cast
 // bit-for-bit to int64 — the highest capability bit is ~40, far below the sign
 // bit, and the cast is reversible either way.
-func toRow(ev event.ProcessEvent, wall time.Time) []any {
+func toRow(evt event.ProcessEvent, wall time.Time) []any {
 	return []any{
 		wall,
-		int16(ev.Version),
-		ev.Type.String(),
-		int32(ev.PID),
-		int32(ev.PPID),
-		int64(ev.UID),
-		int64(ev.GID),
-		int64(ev.CapEffective),
-		ev.Comm,
+		int16(evt.Version),
+		evt.Type.String(),
+		int32(evt.PID),
+		int32(evt.PPID),
+		int64(evt.UID),
+		int64(evt.GID),
+		int64(evt.CapEffective),
+		evt.Comm,
 	}
 }

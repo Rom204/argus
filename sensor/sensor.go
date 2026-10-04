@@ -25,9 +25,9 @@ const ringbufMapName = "events"
 
 // Sensor owns the loaded BPF objects and the ring buffer reader.
 type Sensor struct {
-	coll   *ebpf.Collection
-	links  []link.Link
-	reader *ringbuf.Reader
+	collection *ebpf.Collection
+	links      []link.Link
+	reader     *ringbuf.Reader
 }
 
 // New loads the compiled BPF object and attaches every program in it.
@@ -48,20 +48,20 @@ func New(object []byte) (*Sensor, error) {
 		return nil, fmt.Errorf("parse BPF object: %w", err)
 	}
 
-	coll, err := ebpf.NewCollection(spec)
+	collection, err := ebpf.NewCollection(spec)
 	if err != nil {
 		// The verifier's rejection reason is in here and is the single most
 		// useful thing to read when a probe fails to load.
-		var ve *ebpf.VerifierError
-		if errors.As(err, &ve) {
-			return nil, fmt.Errorf("load BPF programs, verifier said:\n%+v", ve)
+		var verifierErr *ebpf.VerifierError
+		if errors.As(err, &verifierErr) {
+			return nil, fmt.Errorf("load BPF programs, verifier said:\n%+v", verifierErr)
 		}
 		return nil, fmt.Errorf("load BPF programs: %w", err)
 	}
 
-	s := &Sensor{coll: coll}
+	s := &Sensor{collection: collection}
 
-	for name, prog := range coll.Programs {
+	for name, prog := range collection.Programs {
 		progSpec := spec.Programs[name]
 
 		target, err := programAttachTarget(progSpec.Type, progSpec.AttachTo)
@@ -70,20 +70,20 @@ func New(object []byte) (*Sensor, error) {
 			return nil, fmt.Errorf("program %q: %w", name, err)
 		}
 
-		l, err := attach(target, prog)
+		probeLink, err := attach(target, prog)
 		if err != nil {
 			s.Close()
 			return nil, fmt.Errorf("attach %q to %s: %w", name, progSpec.SectionName, err)
 		}
-		s.links = append(s.links, l)
+		s.links = append(s.links, probeLink)
 	}
 
-	rd, err := ringbuf.NewReader(coll.Maps[ringbufMapName])
+	reader, err := ringbuf.NewReader(collection.Maps[ringbufMapName])
 	if err != nil {
 		s.Close()
 		return nil, fmt.Errorf("open ring buffer %q: %w", ringbufMapName, err)
 	}
-	s.reader = rd
+	s.reader = reader
 
 	return s, nil
 }
@@ -123,23 +123,23 @@ func (s *Sensor) Run(ctx context.Context, handle func(event.ProcessEvent)) error
 			return fmt.Errorf("read ring buffer: %w", err)
 		}
 
-		ev, err := event.Unmarshal(record.RawSample)
+		evt, err := event.Unmarshal(record.RawSample)
 		if err != nil {
 			log.Printf("skipping malformed event: %v", err)
 			continue
 		}
 
-		if isKernelThread(ev) {
+		if isKernelThread(evt) {
 			continue
 		}
 
 		// Drop set*id calls that re-assert credentials the process already
 		// held — see identityTracker.
-		if !identities.observe(ev) {
+		if !identities.observe(evt) {
 			continue
 		}
 
-		handle(ev)
+		handle(evt)
 	}
 }
 
@@ -152,13 +152,13 @@ func (s *Sensor) Close() error {
 			errs = append(errs, err)
 		}
 	}
-	for _, l := range s.links {
-		if err := l.Close(); err != nil {
+	for _, probeLink := range s.links {
+		if err := probeLink.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	if s.coll != nil {
-		s.coll.Close()
+	if s.collection != nil {
+		s.collection.Close()
 	}
 
 	return errors.Join(errs...)

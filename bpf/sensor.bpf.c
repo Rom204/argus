@@ -20,9 +20,7 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
-/* 256KB. Must be a page-aligned power of two. At 48 bytes per event this
- * holds ~5,400 events, well above the 1,000 events/sec budget (CLAUDE.md §10)
- * even if the reader stalls briefly. */
+/* 256KB. Must be a page-aligned power of two. */
 struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
 	__uint(max_entries, 256 * 1024);
@@ -35,36 +33,36 @@ struct {
  */
 static __always_inline struct process_event *event_begin(__u32 type)
 {
-	struct process_event *e;
+	struct process_event *event;
 	struct task_struct *task;
 	__u64 pid_tgid, uid_gid;
 
-	e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-	if (!e)
+	event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
+	if (!event)
 		return NULL;
 
-	e->timestamp_ns = bpf_ktime_get_ns();
-	e->version = ARGUS_EVENT_VERSION;
-	e->type = type;
+	event->timestamp_ns = bpf_ktime_get_ns();
+	event->version = ARGUS_EVENT_VERSION;
+	event->type = type;
 
 	/* High half is the TGID — the PID userspace tools show. */
 	pid_tgid = bpf_get_current_pid_tgid();
-	e->pid = pid_tgid >> 32;
+	event->pid = pid_tgid >> 32;
 
 	/* Parent's TGID. The only field needing CO-RE: real_parent's offset
 	 * inside task_struct varies between kernels, so BPF_CORE_READ emits a
 	 * relocation the loader patches at load time. real_parent (not parent)
 	 * is the true creator — parent can be changed by ptrace. */
 	task = (struct task_struct *)bpf_get_current_task();
-	e->ppid = BPF_CORE_READ(task, real_parent, tgid);
+	event->ppid = BPF_CORE_READ(task, real_parent, tgid);
 
 	/* Note this is the *real* uid/gid: the helper reads cred->uid and
 	 * cred->gid, not the effective pair. event.h documents it as such, and
 	 * the CAPS handler below must read the same fields so user space is
 	 * comparing like with like. */
 	uid_gid = bpf_get_current_uid_gid();
-	e->uid = (__u32)uid_gid;
-	e->gid = uid_gid >> 32;
+	event->uid = (__u32)uid_gid;
+	event->gid = uid_gid >> 32;
 
 	/* Capabilities in force right now. Read from the task we already have,
 	 * so every event type carries it — a process's privilege is then
@@ -72,11 +70,11 @@ static __always_inline struct process_event *event_begin(__u32 type)
 	 *
 	 * kernel_cap_t became a single u64 in kernel 6.3 (it was u32 cap[2]
 	 * before), so `.val` does not compile against an older vmlinux.h. */
-	e->cap_effective = BPF_CORE_READ(task, cred, cap_effective.val);
+	event->cap_effective = BPF_CORE_READ(task, cred, cap_effective.val);
 
-	bpf_get_current_comm(&e->comm, sizeof(e->comm));
+	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
-	return e;
+	return event;
 }
 
 /*
@@ -91,12 +89,12 @@ static __always_inline struct process_event *event_begin(__u32 type)
 SEC("tp/sched/sched_process_exec")
 int handle_exec(void *ctx)
 {
-	struct process_event *e = event_begin(ARGUS_EVENT_EXECVE);
+	struct process_event *event = event_begin(ARGUS_EVENT_EXECVE);
 
-	if (!e)
+	if (!event)
 		return 0;
 
-	bpf_ringbuf_submit(e, 0);
+	bpf_ringbuf_submit(event, 0);
 	return 0;
 }
 
@@ -111,17 +109,17 @@ int handle_exec(void *ctx)
 SEC("tp/sched/sched_process_exit")
 int handle_exit(void *ctx)
 {
-	struct process_event *e;
+	struct process_event *event;
 	__u64 pid_tgid = bpf_get_current_pid_tgid();
 
 	if ((__u32)pid_tgid != (pid_tgid >> 32))
 		return 0;
 
-	e = event_begin(ARGUS_EVENT_EXIT);
-	if (!e)
+	event = event_begin(ARGUS_EVENT_EXIT);
+	if (!event)
 		return 0;
 
-	bpf_ringbuf_submit(e, 0);
+	bpf_ringbuf_submit(event, 0);
 	return 0;
 }
 
@@ -136,16 +134,16 @@ int handle_exit(void *ctx)
  */
 static __always_inline int handle_setid(struct trace_event_raw_sys_exit *ctx)
 {
-	struct process_event *e;
+	struct process_event *event;
 
 	if (ctx->ret != 0)
 		return 0;
 
-	e = event_begin(ARGUS_EVENT_SETUID);
-	if (!e)
+	event = event_begin(ARGUS_EVENT_SETUID);
+	if (!event)
 		return 0;
 
-	bpf_ringbuf_submit(e, 0);
+	bpf_ringbuf_submit(event, 0);
 	return 0;
 }
 
@@ -206,7 +204,7 @@ int handle_setresgid(struct trace_event_raw_sys_exit *ctx) { return handle_setid
 SEC("kprobe/commit_creds")
 int BPF_KPROBE(handle_commit_creds, struct cred *new)
 {
-	struct process_event *e;
+	struct process_event *event;
 	struct task_struct *task;
 	const struct cred *old;
 	__u32 uid, gid;
@@ -224,14 +222,14 @@ int BPF_KPROBE(handle_commit_creds, struct cred *new)
 	    caps == BPF_CORE_READ(old, cap_effective.val))
 		return 0;
 
-	e = event_begin(ARGUS_EVENT_CAPS);
-	if (!e)
+	event = event_begin(ARGUS_EVENT_CAPS);
+	if (!event)
 		return 0;
 
-	e->uid = uid;
-	e->gid = gid;
-	e->cap_effective = caps;
+	event->uid = uid;
+	event->gid = gid;
+	event->cap_effective = caps;
 
-	bpf_ringbuf_submit(e, 0);
+	bpf_ringbuf_submit(event, 0);
 	return 0;
 }

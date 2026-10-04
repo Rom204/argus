@@ -69,8 +69,8 @@ func (w *Writer) Start() {
 }
 
 // Add queues one event for writing. It must not be called after Close.
-func (w *Writer) Add(ev event.ProcessEvent) {
-	w.in <- toRow(ev, w.clock.WallTime(ev.TimestampNS))
+func (w *Writer) Add(evt event.ProcessEvent) {
+	w.in <- toRow(evt, w.clock.WallTime(evt.TimestampNS))
 }
 
 // Close stops accepting events, flushes whatever is still queued, and waits

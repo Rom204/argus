@@ -19,20 +19,22 @@ LIMIT 20;
 --    (The anchor is parenthesised: ORDER BY/LIMIT inside one arm of a UNION
 --    is a syntax error otherwise.)
 WITH RECURSIVE tree AS (
-    (SELECT p.*, 0 AS depth
-     FROM processes AS p
-     WHERE p.comm = 'sudo'
-       AND p.started_at > now() - interval '1 hour'
-     ORDER BY p.started_at DESC
+    -- Anchor: the one sudo to start from.
+    (SELECT root.*, 0 AS depth
+     FROM processes AS root
+     WHERE root.comm = 'sudo'
+       AND root.started_at > now() - interval '1 hour'
+     ORDER BY root.started_at DESC
      LIMIT 1)
   UNION ALL
-    SELECT c.*, t.depth + 1
-    FROM processes AS c
-    JOIN tree AS t
-      ON c.ppid = t.pid
-     AND c.started_at >= t.started_at
-     AND (t.exited_at IS NULL OR c.started_at <= t.exited_at)
-    WHERE t.depth < 10
+    -- Recursive arm: children of whatever the previous round found.
+    SELECT child.*, parent.depth + 1
+    FROM processes AS child
+    JOIN tree AS parent
+      ON child.ppid = parent.pid
+     AND child.started_at >= parent.started_at
+     AND (parent.exited_at IS NULL OR child.started_at <= parent.exited_at)
+    WHERE parent.depth < 10
 )
 SELECT repeat('  ', depth) || comm AS process, pid, ppid, uid, started_at, exited_at
 FROM tree

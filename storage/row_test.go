@@ -35,7 +35,7 @@ func TestToRow_ValuesFollowColumnOrder(t *testing.T) {
 	t.Parallel()
 
 	wall := time.Date(2026, 9, 17, 12, 25, 4, 865_000_000, time.UTC)
-	ev := event.ProcessEvent{
+	evt := event.ProcessEvent{
 		Version:      2,
 		Type:         event.TypeExecve,
 		PID:          71913,
@@ -46,7 +46,7 @@ func TestToRow_ValuesFollowColumnOrder(t *testing.T) {
 		CapEffective: 0x2000,
 	}
 
-	got := toRow(ev, wall)
+	got := toRow(evt, wall)
 
 	want := map[string]any{
 		"time":          wall,
