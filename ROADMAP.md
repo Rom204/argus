@@ -21,7 +21,7 @@ The rhythm: open a fresh conversation per milestone (or per sub-task if a milest
 
 ## Current status
 
-> **Scope change, 2026-10-03.** The project was re-scoped for an interview demo on 2026-10-07.
+> **Scope change, 2026-10-03.** The project was re-scoped to a smaller deliverable.
 > Milestones 3, 4 and 5 below are **cancelled, not pending** — see "Deliberately out of scope".
 > The deliverable is now M0–M2 plus Milestone D: collect process events, store them, show them in
 > a web table.
@@ -36,7 +36,7 @@ never been run, and when it was, the `events` table turned out to have been empt
 (see `KNOWLEDGE_BASE.md`). It now holds real rows. Milestone D complete apart from the firewall step.
 
 **Next actionable sub-task:** Milestone D.8 — `sudo ufw allow 8080/tcp`, so the demo URL
-`http://192.168.64.5:8080` works without VS Code running. Then Tuesday's rehearsal.
+`http://192.168.64.5:8080` works without VS Code running.
 
 **Known gap, unchanged:** fork-without-exec produces no creation event (note under M1.13).
 
@@ -125,8 +125,6 @@ separate processes: collector (root), API (unprivileged), browser.
 - [x] **D.6** `web/index.html` + `web/web.go` — 179 lines, no CDN, no framework, no build step. Table, type filter, Pause, 2-second refresh. Embedded in the binary; the embed lives in `web/` because `//go:embed` cannot reach a parent directory
 - [x] **D.7** `cmd/argus-api/main.go` — binds `0.0.0.0:8080`, graceful shutdown via `signal.NotifyContext` + `Shutdown`, `ReadHeaderTimeout` set. Needs no root
 - [ ] **D.8** `sudo ufw allow 8080/tcp` — *Rom, needs sudo.* Without it the Mac browser hangs with no error on `192.168.64.5:8080`. VS Code Remote-SSH's automatic port forwarding makes `localhost:8080` work as a second route, but only while VS Code is open
-- [ ] **D.9** Rehearsal (Tuesday): twice, from a cold VM boot, Mac Wi-Fi off, inside 5 minutes; write `docs/DEMO.md`
-
 **Done when:** `docker compose up -d`, `sudo ./argus`, `./argus-api`, then
 `http://192.168.64.5:8080` on the Mac shows a populating table, and a command typed in an SSH
 session appears within ~2 seconds.
@@ -146,7 +144,7 @@ Cancelled by the 2026-10-03 re-scope. Kept below as a record of what was planned
 | M3 network events (`tcp_connect`) | New probe, new event type, contract version bump. No demo value. |
 | M3 systemd unit | Running the agent by hand in a terminal is a better demo. |
 | M3 benchmarks | Budget stays a stated target in the README; not measured. |
-| M4 detection rule engine / MITRE | A whole new layer. Not what the role asks for. |
+| M4 detection rule engine / MITRE | A whole new layer; out of scope for the reduced deliverable. |
 | M5 React web UI | Replaced by Milestone D's single static page — no framework, no build step, and every line explainable. |
 | Replay mode | Unnecessary: the API reads the database, not the agent, so the demo survives the sensor failing. The persistent volume is the fallback. |
 

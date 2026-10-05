@@ -68,9 +68,7 @@ Never claim tests pass. Show them passing.
 
 An Endpoint Detection & Response agent that runs on Linux hosts, uses eBPF to observe user-space process lifecycle at the kernel level, streams telemetry to a local queryable datastore, and provides the foundation for behavioral threat detection based on MITRE ATT&CK patterns. Positioned as a learning-oriented implementation of the same core pattern used by CrowdStrike, SentinelOne, Falco, and Tetragon.
 
-- **Owner:** Rom, 2nd-year CS student at Reichman University
-- **Purpose:** portfolio artifact for cybersecurity roles — *not* a production system
-- **Timeline:** ~1 month
+- **Purpose:** a learning project — *not* a production system
 
 ---
 
@@ -88,7 +86,7 @@ v1 is reached at the end of Milestone 3 in `ROADMAP.md`. M4 and M5 are optional.
 
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
-| Kernel probes | eBPF (C) | Industry standard; leverages Rom's C strength |
+| Kernel probes | eBPF (C) | Industry standard |
 | User-space agent | Go + `cilium/ebpf` library | Best library ecosystem; matches cloud-native security industry; static binary deploy |
 | Storage | PostgreSQL + TimescaleDB | Relational schema for analytics + time-series optimization |
 | Orchestration | Docker Compose | Reproducible local deploy; requires `--privileged` for eBPF (standard, like Falco) |
@@ -151,7 +149,7 @@ Verify environment facts with `uname -a` / `hostname -I` when it matters — the
 
 ## 5. Engineering principles
 
-Treat these as acceptance criteria, not suggestions. Deliberately scaled to a solo, ~1-month, single-host project.
+Treat these as acceptance criteria, not suggestions. Deliberately scaled to a solo, single-host project.
 
 **5.1 Modular Go packages.** As the code grows past the current stub, keep responsibilities separated: BPF object loading, event decoding, and persistence each get their own package. `main.go` stays thin — wiring and lifecycle only, never business logic.
 
@@ -286,9 +284,6 @@ Decided at M2 planning (2026-09-17), shaped by what M1's QA actually showed.
 
 ## 12. Distribution strategy
 
-- **Primary audience:** recruiters and hiring engineers reading the README (95% of readers)
-- **Secondary:** engineers who actually run the code (~5%)
-
 **README-first strategy:** architecture diagram, 30–60 second demo GIF (highest-impact single asset), clear "What It Does" and "What It Does Not Do" sections, tech stack table with a rationale column, Architecture Decision Records in `docs/decisions.md`.
 
 **Deployment:** `docker compose up` inside a Linux VM.
@@ -300,12 +295,11 @@ Decided at M2 planning (2026-09-17), shaped by what M1's QA actually showed.
 ## 13. Working with Rom
 
 - **Do not skip skill files.** Always view relevant `SKILL.md` files before creating or editing code.
-- **Background:** strong in C and systems programming (top grades in Data Structures and Systems Programming in C); comfortable in Node.js/TypeScript from prior full-stack work; **new to Go and eBPF**; **not strong in math** — avoid math-heavy explanations.
 - **Communication style:** concise, dialogue-oriented. Prefer short responses that leave room for follow-up questions.
 - **Analogies only when Rom asks for them** — do not analogize by default.
 - **Explain conceptual questions plainly** — assume OS fundamentals, not much else.
-- **Push back honestly** on scope creep and premature optimization. Rom has a known pattern of blank-page paralysis dressed as thoroughness — call it out when it appears.
-- **Anchor to the goal:** a portfolio artifact meant to open doors at cybersecurity companies, not a production system.
+- **Push back honestly** on scope creep and premature optimization.
+- **Anchor to the goal:** a learning project, not a production system.
 
 ---
 

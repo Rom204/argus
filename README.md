@@ -5,7 +5,7 @@ starts and stops on a host, a Go agent decodes those events and batches them int
 small REST API serves them to a browser.
 
 Built as a learning project to understand how production endpoint agents — CrowdStrike, Falco,
-Tetragon — actually get data out of the kernel. It is a portfolio artifact, not a product.
+Tetragon — actually get data out of the kernel. It is not a product.
 
 <!-- TODO: record a 30-60s terminal+browser GIF of the demo and embed it here. It is the single
      highest-impact thing that could be added to this page. -->
@@ -230,7 +230,7 @@ storage/    row mapping, batching writer, pgx pool, the SQL migration
 api/        REST handlers and query-parameter validation
 web/        the single-page UI, embedded into the binary
 cmd/        argus-api (the agent's main lives at the repo root)
-docs/       example queries, demo runbook
+docs/       example queries
 ```
 
 ## Tests
@@ -280,7 +280,6 @@ Written down rather than hidden.
 | [`CLAUDE.md`](CLAUDE.md) | The spec: locked decisions, engineering principles, the architecture contract |
 | [`ROADMAP.md`](ROADMAP.md) | Milestones, what was completed, and what was cancelled with reasons |
 | [`KNOWLEDGE_BASE.md`](KNOWLEDGE_BASE.md) | Engineering ledger — every problem hit, its root cause, and the fix |
-| [`docs/DEMO.md`](docs/DEMO.md) | Operational runbook for running the whole thing live |
 
 ## License
 
